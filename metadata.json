@@ -1,0 +1,5 @@
+{
+  "name": "AI StudioX_m9_ImageResolution",
+  "description": "An infinite canvas to visually connect Text, Assistant, Image, and Video generation nodes to create content workflows powered by the Gemini API.",
+  "requestFramePermissions": []
+}
