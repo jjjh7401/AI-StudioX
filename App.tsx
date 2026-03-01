@@ -743,7 +743,7 @@ const App: React.FC = () => {
             }
         }
 
-        const result = await generateImage(prompts.join('\n\n'), data.aspectRatio, processedReferenceImages, 'gemini-3-pro-image-preview', data.imageSize || '1K');
+        const result = await generateImage(prompts.join('\n\n'), data.aspectRatio, processedReferenceImages, 'gemini-3.1-flash-image-preview', data.imageSize || '1K');
         if (result && result.length > 0) {
             result.forEach(url => onAssetGenerated({ type: 'image', url }));
         }
@@ -798,7 +798,7 @@ const App: React.FC = () => {
         const combinedPrompt = `${prompts.join('\n\n')}\n\nCRITICAL INSTRUCTION: The red markings in the second reference image specify where modifications should occur. Keep all other parts of the first image pixel-perfect. No text allowed in output.`;
         
         const markupRef = data.markupDataUrl || sourceImage;
-        const result = await generateImage(combinedPrompt, '1:1', [sourceImage, markupRef], 'gemini-3-pro-image-preview');
+        const result = await generateImage(combinedPrompt, '1:1', [sourceImage, markupRef], 'gemini-3.1-flash-image-preview');
         const finalUrl = result?.[0] || null;
         if (finalUrl) {
             onAssetGenerated({ type: 'image', url: finalUrl });
@@ -831,7 +831,7 @@ const App: React.FC = () => {
         const gridInstruction = data.gridSize ? `Generate a ${data.gridSize} grid.` : "Generate a 7x6 grid.";
         const fullPrompt = `${prompts.join('\n\n')}\n\n${gridInstruction}`;
 
-        const result = await generateImage(fullPrompt, '4:5', referenceImages, 'gemini-3-pro-image-preview');
+        const result = await generateImage(fullPrompt, '4:5', referenceImages, 'gemini-3.1-flash-image-preview');
         const imageUrl = result?.[0] || null;
         if (imageUrl) {
             onAssetGenerated({ type: 'image', url: imageUrl });
@@ -1458,7 +1458,7 @@ const App: React.FC = () => {
     switch (type) {
       case NodeType.Text: newNode = { ...baseNode, size: { width: 350, height: 250 }, data: { text: '', textScale: 1 }, inputs: [], outputs: [{ id: 'text-out', name: 'Text Out', type: ConnectorType.Text }] }; break;
       case NodeType.Assistant: newNode = { ...baseNode, size: { width: 400, height: 500 }, data: { prompt: '', response: '', isLoading: false, systemPrompt: SYSTEM_PROMPTS['Image & Video'] }, inputs: [{ id: 'text-in-0', name: 'Text In 1', type: ConnectorType.Text }, { id: 'text-in-1', name: 'Text In 2', type: ConnectorType.Text }, { id: 'image-in-0', name: 'Image In 1', type: ConnectorType.Image }, { id: 'image-in-1', name: 'Image In 2', type: ConnectorType.Image }, { id: 'reference-in', name: 'Reference In', type: ConnectorType.Image }], outputs: [{ id: 'prompt-out', name: 'Text(Prompt) Out', type: ConnectorType.Text }] }; break;
-      case NodeType.Image: newNode = { ...baseNode, size: { width: 400, height: 500 }, data: { imageUrls: [], isLoading: false, model: 'gemini-3-pro-image-preview', aspectRatio: '16:9', numberOfImages: 1, imageSize: '1K' }, inputs: [{ id: 'text-in-0', name: 'Text(Prompt) In 1', type: ConnectorType.Text }, { id: 'text-in-1', name: 'Text(Prompt) In 2', type: ConnectorType.Text }, {id: 'image-in', name: 'Image In', type: ConnectorType.Image}, {id: 'reference-in', name: 'Reference In', type: ConnectorType.Image}], outputs: [{ id: 'image-out', name: 'Image Out', type: ConnectorType.Image }] }; break;
+      case NodeType.Image: newNode = { ...baseNode, size: { width: 400, height: 500 }, data: { imageUrls: [], isLoading: false, model: 'gemini-3.1-flash-image-preview', aspectRatio: '16:9', numberOfImages: 1, imageSize: '1K' }, inputs: [{ id: 'text-in-0', name: 'Text(Prompt) In 1', type: ConnectorType.Text }, { id: 'text-in-1', name: 'Text(Prompt) In 2', type: ConnectorType.Text }, {id: 'image-in', name: 'Image In', type: ConnectorType.Image}, {id: 'reference-in', name: 'Reference In', type: ConnectorType.Image}], outputs: [{ id: 'image-out', name: 'Image Out', type: ConnectorType.Image }] }; break;
       case NodeType.ImagePreview: newNode = { ...baseNode, size: { width: 400, height: 500 }, data: { imageUrls: [], isLoading: false, model: 'gemini-2.5-flash-image', aspectRatio: '16:9', numberOfImages: 1 }, inputs: [{ id: 'text-in-0', name: 'Text(Prompt) In 1', type: ConnectorType.Text }, { id: 'text-in-1', name: 'Text(Prompt) In 2', type: ConnectorType.Text }, {id: 'image-in', name: 'Image In', type: ConnectorType.Image}, {id: 'reference-in', name: 'Reference In', type: ConnectorType.Image}], outputs: [{ id: 'image-out', name: 'Image Out', type: ConnectorType.Image }] }; break;
       case NodeType.ImageEdit: newNode = { ...baseNode, size: { width: 400, height: 500 }, data: { inputImageUrl: null, outputImageUrl: null, isLoading: false, imageSize: '1K' }, inputs: [{ id: 'text-in-0', name: 'Text(Prompt) In 1', type: ConnectorType.Text }, { id: 'text-in-1', name: 'Text(Prompt) In 2', type: ConnectorType.Text }, {id: 'image-in', name: 'Image In', type: ConnectorType.Image}, {id: 'reference-in', name: 'Reference In', type: ConnectorType.Image}], outputs: [{ id: 'image-out', name: 'Image Out', type: ConnectorType.Image }] }; break;
       case NodeType.ImageLoad: newNode = { ...baseNode, size: { width: 300, height: 300 }, data: { imageUrls: [] }, inputs: [], outputs: [{ id: 'image-out', name: 'Image Out', type: ConnectorType.Image }] }; break;

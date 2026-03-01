@@ -223,7 +223,7 @@ export const generateText = async (prompt: string, base64Images: string[] | null
 export const generateImage = async (prompt: string, aspectRatio: string, referenceImages: string[], modelName: string = 'gemini-2.5-flash-image', imageSize: '1K' | '2K' | '4K' = '1K'): Promise<string[] | null> => {
     return withRetry(async () => {
         const ai = await getFreshGenAI();
-        const isPro = modelName === 'gemini-3-pro-image-preview';
+        const supportsConfig = modelName === 'gemini-3-pro-image-preview' || modelName === 'gemini-3.1-flash-image-preview';
         const parts: any[] = [];
         
         for (const url of referenceImages) {
@@ -236,7 +236,7 @@ export const generateImage = async (prompt: string, aspectRatio: string, referen
         const response = await ai.models.generateContent({
             model: modelName,
             contents: { parts },
-            config: isPro ? { imageConfig: { aspectRatio, imageSize } } : undefined
+            config: supportsConfig ? { imageConfig: { aspectRatio, imageSize } } : undefined
         });
         
         const images = response.candidates?.[0]?.content?.parts
@@ -248,7 +248,7 @@ export const generateImage = async (prompt: string, aspectRatio: string, referen
 };
 
 export const editImage = async (prompt: string, base64Images: string[], imageSize: '1K' | '2K' | '4K' = '1K'): Promise<string | null> => {
-    const res = await generateImage(prompt, '1:1', base64Images, 'gemini-3-pro-image-preview', imageSize);
+    const res = await generateImage(prompt, '1:1', base64Images, 'gemini-3.1-flash-image-preview', imageSize);
     return res ? res[0] : null;
 };
 
@@ -260,13 +260,13 @@ export const removeBackground = async (base64Image: string): Promise<string | nu
 
 export const expandImage = async (base64Image: string): Promise<string | null> => {
     const prompt = "Outpaint the image edges to expand the scene naturally.";
-    const res = await generateImage(prompt, '16:9', [base64Image], 'gemini-3-pro-image-preview');
+    const res = await generateImage(prompt, '16:9', [base64Image], 'gemini-3.1-flash-image-preview');
     return res ? res[0] : null;
 };
 
 export const upscaleImage = async (base64Image: string): Promise<string | null> => {
     const prompt = "Upscale this image to 4K resolution, enhancing sharpness and fine textures.";
-    const res = await generateImage(prompt, '1:1', [base64Image], 'gemini-3-pro-image-preview');
+    const res = await generateImage(prompt, '1:1', [base64Image], 'gemini-3.1-flash-image-preview');
     return res ? res[0] : null;
 };
 
