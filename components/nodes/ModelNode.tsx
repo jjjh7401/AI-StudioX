@@ -103,17 +103,87 @@ const ModelNode: React.FC<ModelNodeProps> = ({ node, onDataChange, onGenerate, i
         </div>
 
         {/* Right Panel */}
-        <div className="w-1/2 bg-gray-900 rounded-md flex items-center justify-center border-2 border-dashed border-gray-700">
-            {data.isLoading ? (
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
-            ) : data.outputImageUrl ? (
-                <img src={data.outputImageUrl} crossOrigin="anonymous" alt="Generated Model" className="w-full h-full object-contain rounded-md" />
-            ) : (
-                <p className="text-gray-500 text-center text-sm px-4">
-                    {isImageConnected 
-                        ? 'Connected image will be standardized.' 
-                        : 'Your generated model will appear here.'}
-                </p>
+        <div className="w-1/2 flex flex-col space-y-2">
+            <div className="flex-grow bg-gray-900 rounded-md flex items-center justify-center border-2 border-dashed border-gray-700 overflow-hidden">
+                {data.isLoading ? (
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
+                ) : data.outputImageUrl ? (
+                    <img src={data.outputImageUrl} crossOrigin="anonymous" alt="Generated Model" className="w-full h-full object-contain rounded-md" />
+                ) : (
+                    <p className="text-gray-500 text-center text-sm px-4">
+                        {isImageConnected 
+                            ? 'Connected image will be standardized.' 
+                            : 'Your generated model will appear here.'}
+                    </p>
+                )}
+            </div>
+            {data.outputImageUrl && data.appliedOptions && !isImageConnected && (
+                <div className="flex-shrink-0 bg-white rounded-md p-2 flex flex-col space-y-2 shadow-inner">
+                    <div className="grid grid-cols-3 gap-1">
+                        <select 
+                            value={data.appliedOptions.gender} 
+                            onChange={(e) => onDataChange(node.id, { appliedOptions: { ...data.appliedOptions!, gender: e.target.value as 'Woman' | 'Man' } })}
+                            className="text-xs border border-gray-300 rounded p-1 text-gray-800 bg-white"
+                        >
+                            <option value="Woman">Woman</option>
+                            <option value="Man">Man</option>
+                        </select>
+                        <input 
+                            type="number" 
+                            value={data.appliedOptions.age} 
+                            onChange={(e) => onDataChange(node.id, { appliedOptions: { ...data.appliedOptions!, age: e.target.value } })}
+                            className="text-xs border border-gray-300 rounded p-1 text-gray-800 bg-white"
+                        />
+                        <select 
+                            value={data.appliedOptions.nationality} 
+                            onChange={(e) => onDataChange(node.id, { appliedOptions: { ...data.appliedOptions!, nationality: e.target.value } })}
+                            className="text-xs border border-gray-300 rounded p-1 text-gray-800 bg-white"
+                        >
+                            {MODEL_NATIONALITIES.map(n => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1">
+                        <select 
+                            value={data.appliedOptions.faceShape} 
+                            onChange={(e) => onDataChange(node.id, { appliedOptions: { ...data.appliedOptions!, faceShape: e.target.value } })}
+                            className="text-xs border border-gray-300 rounded p-1 text-gray-800 bg-white"
+                        >
+                            {MODEL_FACE_SHAPES.filter(s => s.toLowerCase() !== 'random').map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <select 
+                            value={data.appliedOptions.hairStyle} 
+                            onChange={(e) => onDataChange(node.id, { appliedOptions: { ...data.appliedOptions!, hairStyle: e.target.value } })}
+                            className="text-xs border border-gray-300 rounded p-1 text-gray-800 bg-white"
+                        >
+                            {MODEL_HAIR_STYLES.filter(s => s.toLowerCase() !== 'random').map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <select 
+                            value={data.appliedOptions.hairColor} 
+                            onChange={(e) => onDataChange(node.id, { appliedOptions: { ...data.appliedOptions!, hairColor: e.target.value } })}
+                            className="text-xs border border-gray-300 rounded p-1 text-gray-800 bg-white"
+                        >
+                            {MODEL_HAIR_COLORS.filter(s => s.toLowerCase() !== 'random').map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                    </div>
+                    <input 
+                        type="text" 
+                        value={data.appliedOptions.additionalPrompt} 
+                        onChange={(e) => onDataChange(node.id, { appliedOptions: { ...data.appliedOptions!, additionalPrompt: e.target.value } })}
+                        className="text-xs border border-gray-300 rounded p-1 text-gray-800 w-full bg-white"
+                        placeholder="Additional details..."
+                    />
+                    <button 
+                        onClick={() => {
+                            onDataChange(node.id, { useAppliedOptionsNext: true });
+                            setTimeout(() => onGenerate(node.id), 100);
+                        }}
+                        disabled={data.isLoading}
+                        className="w-full py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-medium rounded border border-gray-300 flex items-center justify-center gap-1 transition-colors"
+                    >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                        Regenerate
+                    </button>
+                </div>
             )}
         </div>
     </div>

@@ -1,6 +1,6 @@
 
 export const MODEL_NATIONALITIES: readonly string[] = [
-    'Korean', 'American', 'British', 'Japanese', 'Chinese', 'French', 'German', 'Italian', 'Spanish', 'Brazilian', 'Indian'
+    'random', 'Korean', 'American', 'British', 'Japanese', 'Chinese', 'French', 'German', 'Italian', 'Spanish', 'Brazilian', 'Indian'
 ];
 
 export const MODEL_FACE_SHAPES: readonly string[] = [

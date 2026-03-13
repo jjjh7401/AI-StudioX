@@ -175,6 +175,16 @@ export interface ModelNodeData {
     additionalPrompt: string;
     outputImageUrl: string | null;
     isLoading: boolean;
+    useAppliedOptionsNext?: boolean;
+    appliedOptions?: {
+        gender: 'Woman' | 'Man';
+        age: string;
+        nationality: string;
+        faceShape: string;
+        hairStyle: string;
+        hairColor: string;
+        additionalPrompt: string;
+    };
 }
 
 export interface VtonOutfitItem {

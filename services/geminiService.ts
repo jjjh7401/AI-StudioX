@@ -384,8 +384,27 @@ export const generateVideo = async (
 };
 
 export const generateVirtualModel = async (p: any) => {
-    const prompt = `Full body studio portrait of a ${p.age}yo ${p.nationality} ${p.gender}. ${p.faceShape} face, ${p.hairStyle} ${p.hairColor} hair. Standing, neutral, white background.`;
-    const res = await generateImage(prompt, '3:4', [], 'gemini-2.5-flash-image');
+    const parts = [];
+    parts.push(`Full body studio portrait of a ${p.age} years old ${p.nationality} ${p.gender}.`);
+    
+    if (p.faceShape && p.faceShape.toLowerCase() !== 'random') {
+        parts.push(`${p.faceShape} face shape.`);
+    }
+    
+    const hairStyle = p.hairStyle && p.hairStyle.toLowerCase() !== 'random' ? p.hairStyle : '';
+    const hairColor = p.hairColor && p.hairColor.toLowerCase() !== 'random' ? p.hairColor : '';
+    if (hairStyle || hairColor) {
+        parts.push(`${hairColor} ${hairStyle} hair.`.trim());
+    }
+    
+    parts.push(`Standing, neutral expression, plain white background.`);
+    
+    if (p.additionalPrompt) {
+        parts.push(`Detailed description: ${p.additionalPrompt}`);
+    }
+    
+    const prompt = parts.join(' ');
+    const res = await generateImage(prompt, '3:4', [], 'gemini-3.1-flash-image-preview');
     return res ? res[0] : null;
 };
 

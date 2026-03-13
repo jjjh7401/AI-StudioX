@@ -55,7 +55,7 @@ import HistoryPanel from './components/HistoryPanel';
 import { generateText, generateImage, editImage, removeBackground, expandImage, upscaleImage, generateVirtualModel, generateModelFromImage, generateVtonImage, generateStoryboardScenario, generateConsistentImage, analyzeProductInfo, generateScriptFromStyle, captureImagesFromUrl, generateFinalPrompt, constructPromptFromShot, preprocessImageForOutpainting, generateVideo, detectGridItems } from './services/geminiService';
 import { compositeImages, stitchImages, urlToDataURL, addSolidBackground, cropAndTrimImage } from './services/imageProcessingService';
 import { PlayIcon } from '@heroicons/react/24/outline';
-import { COMPOSITE_NODE_HEADER_HEIGHT, COMPOSITE_NODE_CONTENT_PADDING_X, COMPOSITE_NODE_CONTENT_PADDING_Y_TOP, COMPOSITE_NODE_CONTENT_PADDING_Y_BOTTOM, COMPOSITE_NODE_BUTTON_HEIGHT, COMPOSITE_NODE_INTERNAL_SPACING, POSE_PRESETS, RMBG_DEFAULT_BACKGROUND_COLOR } from './data/constants';
+import { COMPOSITE_NODE_HEADER_HEIGHT, COMPOSITE_NODE_CONTENT_PADDING_X, COMPOSITE_NODE_CONTENT_PADDING_Y_TOP, COMPOSITE_NODE_CONTENT_PADDING_Y_BOTTOM, COMPOSITE_NODE_BUTTON_HEIGHT, COMPOSITE_NODE_INTERNAL_SPACING, POSE_PRESETS, RMBG_DEFAULT_BACKGROUND_COLOR, MODEL_NATIONALITIES, MODEL_FACE_SHAPES, MODEL_HAIR_STYLES, MODEL_HAIR_COLORS } from './data/constants';
 import { SYSTEM_PROMPTS } from './data/systemPrompts';
 import ZoomControls from './components/ZoomControls';
 import ProjectControls from './components/ProjectControls';
@@ -936,23 +936,31 @@ const App: React.FC = () => {
         const data = node.data as ModelNodeData;
         const imageInputs = getImageInputValues(nodeId);
         let result: string | null;
+        
+        const getRandomItem = (arr: readonly string[]) => {
+            const validItems = arr.filter(item => item.toLowerCase() !== 'random');
+            return validItems[Math.floor(Math.random() * validItems.length)];
+        };
+
+        const appliedOptions = data.useAppliedOptionsNext && data.appliedOptions ? { ...data.appliedOptions } : {
+            gender: data.gender,
+            age: data.age,
+            nationality: data.nationality,
+            faceShape: data.faceShape.toLowerCase() === 'random' ? getRandomItem(MODEL_FACE_SHAPES) : data.faceShape,
+            hairStyle: data.hairStyle.toLowerCase() === 'random' ? getRandomItem(MODEL_HAIR_STYLES) : data.hairStyle,
+            hairColor: data.hairColor.toLowerCase() === 'random' ? getRandomItem(MODEL_HAIR_COLORS) : data.hairColor,
+            additionalPrompt: data.additionalPrompt,
+        };
+
         if (imageInputs.length > 0) {
             result = await generateModelFromImage(imageInputs[0]);
         } else {
-            result = await generateVirtualModel({
-                gender: data.gender,
-                age: data.age,
-                nationality: data.nationality,
-                faceShape: data.faceShape,
-                hairStyle: data.hairStyle,
-                hairColor: data.hairColor,
-                additionalPrompt: data.additionalPrompt,
-            });
+            result = await generateVirtualModel(appliedOptions);
         }
         if (result) {
             onAssetGenerated({ type: 'image', url: result });
         }
-        return { data: { ...data, outputImageUrl: result } };
+        return { data: { ...data, outputImageUrl: result, appliedOptions, useAppliedOptionsNext: false } };
       }
       case NodeType.Vton: {
         const data = node.data as VtonNodeData;
@@ -1464,7 +1472,7 @@ const App: React.FC = () => {
       case NodeType.ImageLoad: newNode = { ...baseNode, size: { width: 300, height: 300 }, data: { imageUrls: [] }, inputs: [], outputs: [{ id: 'image-out', name: 'Image Out', type: ConnectorType.Image }] }; break;
       case NodeType.VideoLoad: newNode = { ...baseNode, size: { width: 300, height: 300 }, data: { videoUrl: null, fileName: null }, inputs: [], outputs: [{ id: 'video-out', name: 'Video Out', type: ConnectorType.Video }] }; break;
       case NodeType.VideoStitch: newNode = { ...baseNode, size: { width: 400, height: 500 }, data: { video1Url: null, video2Url: null, outputVideoUrl: null, isLoading: false, video1TrimFrames: 10, video2TrimFrames: 10 }, inputs: [{ id: 'video-in-1', name: 'Video In 1', type: ConnectorType.Video }, { id: 'video-in-2', name: 'Video In 2', type: ConnectorType.Video }], outputs: [{ id: 'video-out', name: 'Video Out', type: ConnectorType.Video }] }; break;
-      case NodeType.Model: newNode = { ...baseNode, size: { width: 550, height: 580 }, data: { gender: 'Woman', age: '25', nationality: 'Korean', faceShape: 'Random', hairStyle: 'Random', hairColor: 'Random', additionalPrompt: '', outputImageUrl: null, isLoading: false }, inputs: [{id: 'image-in', name: 'Image In', type: ConnectorType.Image}], outputs: [{ id: 'image-out', name: 'Image Out', type: ConnectorType.Image }] }; break;
+      case NodeType.Model: newNode = { ...baseNode, size: { width: 550, height: 700 }, data: { gender: 'Woman', age: '25', nationality: 'Korean', faceShape: 'random', hairStyle: 'random', hairColor: 'random', additionalPrompt: '', outputImageUrl: null, isLoading: false }, inputs: [{id: 'image-in', name: 'Image In', type: ConnectorType.Image}], outputs: [{ id: 'image-out', name: 'Image Out', type: ConnectorType.Image }] }; break;
       case NodeType.Vton: newNode = { ...baseNode, size: { width: 900, height: 700 }, data: { mainImageUrl: null, baseModelUrl: null, outfitItems: [], selectedOutfitId: null, pose: POSE_PRESETS[0], stylingList: [], selectedStylingId: 'base', isLoading: false, outputImageUrl: null }, inputs: [{ id: 'model-in', name: 'Model In', type: ConnectorType.Image }, { id: 'outfit-in', name: 'Outfit In', type: ConnectorType.Image }], outputs: [{ id: 'image-out', name: 'Styling Out', type: ConnectorType.Image }] }; break;
       case NodeType.Video: newNode = { ...baseNode, size: { width: 450, height: 500 }, data: { firstImageUrl: null, lastImageUrl: null, videoUrl: null, isLoading: false, loadingMessage: '', resolution: '720p', aspectRatio: '16:9', lastFrameUrl: null, firstFrameUrl: null, videoObject: null }, inputs: [{ id: 'text-in-0', name: 'Prompt', type: ConnectorType.Text }, { id: 'first-image-in', name: 'Start Frame', type: ConnectorType.Image }, { id: 'last-image-in', name: 'End Frame', type: ConnectorType.Image }, { id: 'video-in', name: 'Extend Video', type: ConnectorType.Video }, { id: 'reference-image-in', name: 'Reference Frame', type: ConnectorType.Image }], outputs: [{ id: 'start-frame-out', name: 'Start Frame', type: ConnectorType.Image }, { id: 'end-frame-out', name: 'End Frame', type: ConnectorType.Image }, { id: 'video-out', name: 'Video Out', type: ConnectorType.Video }] }; break;
       case NodeType.Camera: newNode = { ...baseNode, size: { width: 380, height: 270 }, data: { controls: { rotation: 0, zoom: 0, verticalAngle: 0, wideAngle: false }, text: '' }, inputs: [], outputs: [{ id: 'text-out', name: 'Text Out', type: ConnectorType.Text }] }; break;
@@ -1931,7 +1939,7 @@ const App: React.FC = () => {
   };
 
   const onGenerateNode = useCallback(async (nodeId: string) => {
-    const node = nodes[nodeId]; if (!node || node.isBypassed) return;
+    const node = nodesRef.current[nodeId]; if (!node || node.isBypassed) return;
     setNodes(draft => { if(draft[nodeId] && 'isLoading' in draft[nodeId].data) { (draft[nodeId].data as any).isLoading = true; } });
     try {
         let updatedNodePartial: Partial<Node> = {};
@@ -1955,10 +1963,10 @@ const App: React.FC = () => {
                 updatedNodePartial = { data: { ...data, outputImageUrl: finalResult, isLoading: false } };
             }
         } else {
-            updatedNodePartial = await executeNode(nodeId, nodes, connections, (msg: string) => updateNodeData(nodeId, { loadingMessage: msg }), onAssetGenerated);
+            updatedNodePartial = await executeNode(nodeId, nodesRef.current, connections, (msg: string) => updateNodeData(nodeId, { loadingMessage: msg }), onAssetGenerated);
         }
         setNodes(draft => { if (draft[nodeId]) { Object.assign(draft[nodeId], updatedNodePartial); if (updatedNodePartial.data) { draft[nodeId].data = { ...draft[nodeId].data, ...updatedNodePartial.data }; } if ('isLoading' in draft[nodeId].data) { (draft[nodeId].data as any).isLoading = false; } } });
-        const nextNodes = { ...nodes, [nodeId]: { ...nodes[nodeId], ...updatedNodePartial, data: { ...nodes[nodeId].data, ...updatedNodePartial.data } } } as Record<string, Node>;
+        const nextNodes = { ...nodesRef.current, [nodeId]: { ...nodesRef.current[nodeId], ...updatedNodePartial, data: { ...nodesRef.current[nodeId].data, ...updatedNodePartial.data } } } as Record<string, Node>;
         propagateImmediateUpdates([nodeId], nextNodes, connections);
     } catch (error) {
         console.error(`Error executing node ${nodeId}:`, error);
