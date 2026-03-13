@@ -397,10 +397,12 @@ export const generateVirtualModel = async (p: any) => {
         parts.push(`${hairColor} ${hairStyle} hair.`.trim());
     }
     
-    parts.push(`Standing, neutral expression, plain white background.`);
+    parts.push(`Standing in an A-pose, neutral expression, plain white background.`);
     
-    if (p.additionalPrompt) {
+    if (p.additionalPrompt && p.additionalPrompt.trim() !== '') {
         parts.push(`Detailed description: ${p.additionalPrompt}`);
+    } else {
+        parts.push(`Wearing blue jeans, a white short-sleeve t-shirt, and white sneakers.`);
     }
     
     const prompt = parts.join(' ');
