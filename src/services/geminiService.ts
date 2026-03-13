@@ -3,6 +3,9 @@
 
 import { GoogleGenAI, type Part } from '@google/genai'
 
+// @MX:ANCHOR: [AUTO] Gemini API 진입점 - 모든 AI 생성 기능의 핵심 서비스
+// @MX:REASON: 앱 전체에서 이 서비스를 통해 Gemini API에 접근함
+
 /** API 키 미설정 에러 */
 export class ApiKeyNotSetError extends Error {
   constructor() {
@@ -78,28 +81,35 @@ export async function generateText(
 }
 
 /**
- * 이미지 생성 - base64 data URL 반환
+ * 이미지 생성 - Gemini 3.1 Flash Image (나노바나나2) 사용
+ * base64 data URL 반환
  * @param prompt - 이미지 설명 프롬프트
  */
 export async function generateImage(prompt: string): Promise<string> {
   const ai = requireClient()
 
-  const response = await ai.models.generateImages({
-    model: 'imagen-3.0-generate-002',
-    prompt,
-    config: { numberOfImages: 1 },
+  // @MX:NOTE: [AUTO] 나노바나나2 = gemini-3.1-flash-image-preview
+  // responseModalities ['IMAGE']로 이미지 직접 생성
+  const response = await ai.models.generateContent({
+    model: 'gemini-3.1-flash-image-preview',
+    contents: prompt,
+    config: {
+      responseModalities: ['IMAGE'],
+    },
   })
 
-  const imageBytes = response.generatedImages?.[0]?.image?.imageBytes
-  if (!imageBytes) {
-    throw new Error('이미지 생성에 실패했습니다.')
+  const parts = response.candidates?.[0]?.content?.parts ?? []
+  for (const part of parts) {
+    if (part.inlineData?.data) {
+      return `data:${part.inlineData.mimeType ?? 'image/png'};base64,${part.inlineData.data}`
+    }
   }
 
-  return `data:image/png;base64,${imageBytes}`
+  throw new Error('이미지 생성에 실패했습니다.')
 }
 
 /**
- * 이미지 편집 - 마스크 기반 인페인팅
+ * 이미지 편집 - Gemini 3.1 Flash Image로 이미지 수정
  * @param imageBase64 - 원본 이미지 base64
  * @param maskBase64 - 마스크 이미지 base64 (null이면 전체 편집)
  * @param editPrompt - 편집 지시사항
@@ -126,16 +136,27 @@ export async function editImage(
   }
 
   const response = await ai.models.generateContent({
-    model: 'gemini-2.0-flash',
+    model: 'gemini-3.1-flash-image-preview',
     contents: [{ parts }],
+    config: {
+      responseModalities: ['IMAGE', 'TEXT'],
+    },
   })
+
+  // 이미지 응답 우선 반환
+  const responseParts = response.candidates?.[0]?.content?.parts ?? []
+  for (const part of responseParts) {
+    if (part.inlineData?.data) {
+      return `data:${part.inlineData.mimeType ?? 'image/png'};base64,${part.inlineData.data}`
+    }
+  }
 
   return response.text as string
 }
 
 /**
- * 비디오 생성
- * @param imageBase64 - 참조 이미지 base64
+ * 비디오 생성 - Veo 3 Fast (veo-3.1-fast-generate-preview) 사용
+ * @param imageBase64 - 참조 이미지 base64 (선택사항, 빈 문자열 가능)
  * @param prompt - 비디오 생성 프롬프트
  */
 export async function generateVideo(
@@ -144,24 +165,51 @@ export async function generateVideo(
 ): Promise<string> {
   const ai = requireClient()
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.0-flash',
-    contents: [
+  // @MX:NOTE: [AUTO] Veo 3 Fast = veo-3.1-fast-generate-preview
+  // generateVideos는 비동기 작업 반환 → 완료까지 폴링 필요
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const config: Record<string, unknown> = { numberOfVideos: 1 }
+
+  // 참조 이미지가 있으면 첫 프레임으로 활용
+  if (imageBase64) {
+    config.referenceImages = [
       {
-        parts: [
-          { text: `Generate video description: ${prompt}` },
-          {
-            inlineData: {
-              data: imageBase64.replace(/^data:image\/\w+;base64,/, ''),
-              mimeType: 'image/jpeg',
-            },
-          },
-        ],
+        referenceType: 'REFERENCE_TYPE_SUBJECT',
+        referenceImage: {
+          imageBytes: imageBase64.replace(/^data:image\/\w+;base64,/, ''),
+        },
       },
-    ],
+    ]
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let operation = await (ai.models as any).generateVideos({
+    model: 'veo-3.1-fast-generate-preview',
+    prompt,
+    config,
   })
 
-  return response.text as string
+  // 완료까지 폴링 (5초 간격, 최대 5분)
+  const maxAttempts = 60
+  let attempts = 0
+  while (!operation.done && attempts < maxAttempts) {
+    await new Promise(r => setTimeout(r, 5000))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    operation = await (ai.operations as any).getVideosOperation({ name: operation.name })
+    attempts++
+  }
+
+  if (!operation.done) {
+    throw new Error('비디오 생성 시간이 초과되었습니다.')
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const videoBytes = (operation.response as any)?.generatedVideos?.[0]?.video?.videoBytes
+  if (!videoBytes) {
+    throw new Error('비디오 생성에 실패했습니다.')
+  }
+
+  return `data:video/mp4;base64,${videoBytes}`
 }
 
 /**
@@ -213,12 +261,10 @@ JSON만 반환하세요.`,
 }
 
 /**
- * AI 패션 모델 이미지 생성
+ * AI 패션 모델 이미지 생성 - Gemini 3.1 Flash Image 사용
  * @param options - 모델 옵션 (성별, 나이, 헤어스타일 등)
  */
 export async function generateModel(options: ModelOptions): Promise<string> {
-  const ai = requireClient()
-
   const prompt = `Professional fashion model photo:
 - Gender: ${options.gender}
 - Age: approximately ${options.age} years old
@@ -227,18 +273,7 @@ ${options.outfit ? `- Outfit: ${options.outfit}` : ''}
 ${options.background ? `- Background: ${options.background}` : '- Background: studio white'}
 High quality, professional lighting, full body shot`
 
-  const response = await ai.models.generateImages({
-    model: 'imagen-3.0-generate-002',
-    prompt,
-    config: { numberOfImages: 1 },
-  })
-
-  const imageBytes = response.generatedImages?.[0]?.image?.imageBytes
-  if (!imageBytes) {
-    throw new Error('모델 이미지 생성에 실패했습니다.')
-  }
-
-  return `data:image/png;base64,${imageBytes}`
+  return generateImage(prompt)
 }
 
 /**
@@ -253,7 +288,7 @@ export async function generateVton(
   const ai = requireClient()
 
   const response = await ai.models.generateContent({
-    model: 'gemini-2.0-flash',
+    model: 'gemini-3.1-flash-image-preview',
     contents: [
       {
         parts: [
@@ -263,13 +298,23 @@ export async function generateVton(
         ],
       },
     ],
+    config: {
+      responseModalities: ['IMAGE', 'TEXT'],
+    },
   })
+
+  const parts = response.candidates?.[0]?.content?.parts ?? []
+  for (const part of parts) {
+    if (part.inlineData?.data) {
+      return `data:${part.inlineData.mimeType ?? 'image/png'};base64,${part.inlineData.data}`
+    }
+  }
 
   return response.text as string
 }
 
 /**
- * 그리드 샷 생성
+ * 그리드 샷 생성 - Gemini 3.1 Flash Image 사용
  * @param prompt - 이미지 생성 프롬프트
  * @param layout - 그리드 레이아웃 (예: "3x3", "2x2")
  */
@@ -277,21 +322,8 @@ export async function generateGridShot(
   prompt: string,
   layout: string,
 ): Promise<string> {
-  const ai = requireClient()
-
   const fullPrompt = `Create a ${layout} grid layout product shot: ${prompt}.
 Multiple angles and variations in a clean grid format.`
 
-  const response = await ai.models.generateImages({
-    model: 'imagen-3.0-generate-002',
-    prompt: fullPrompt,
-    config: { numberOfImages: 1 },
-  })
-
-  const imageBytes = response.generatedImages?.[0]?.image?.imageBytes
-  if (!imageBytes) {
-    throw new Error('그리드 샷 생성에 실패했습니다.')
-  }
-
-  return `data:image/png;base64,${imageBytes}`
+  return generateImage(fullPrompt)
 }

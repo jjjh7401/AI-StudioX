@@ -1,22 +1,27 @@
 // geminiService 테스트
-// TDD RED 단계: Gemini AI 서비스 동작 정의
+// Gemini AI 서비스 동작 정의 - 나노바나나2(이미지), Veo 3 Fast(비디오)
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // @google/genai 모킹
 vi.mock('@google/genai', () => {
   const mockGenerateContent = vi.fn()
-  const mockGenerateImages = vi.fn()
+  const mockGenerateVideos = vi.fn()
+  const mockGetVideosOperation = vi.fn()
 
   return {
     GoogleGenAI: vi.fn().mockImplementation(() => ({
       models: {
         generateContent: mockGenerateContent,
-        generateImages: mockGenerateImages,
+        generateVideos: mockGenerateVideos,
+      },
+      operations: {
+        getVideosOperation: mockGetVideosOperation,
       },
     })),
     __mockGenerateContent: mockGenerateContent,
-    __mockGenerateImages: mockGenerateImages,
+    __mockGenerateVideos: mockGenerateVideos,
+    __mockGetVideosOperation: mockGetVideosOperation,
   }
 })
 
@@ -24,6 +29,7 @@ import {
   initializeClient,
   generateText,
   generateImage,
+  generateVideo,
   generateStoryboard,
   ApiKeyNotSetError,
   resetClient,
@@ -46,6 +52,10 @@ describe('geminiService', () => {
 
     it('API 키 미설정 시 generateImage 예외 발생', async () => {
       await expect(generateImage('a cat')).rejects.toThrow(ApiKeyNotSetError)
+    })
+
+    it('API 키 미설정 시 generateVideo 예외 발생', async () => {
+      await expect(generateVideo('', 'a cat running')).rejects.toThrow(ApiKeyNotSetError)
     })
   })
 
@@ -77,19 +87,28 @@ describe('geminiService', () => {
     })
   })
 
-  describe('generateImage', () => {
+  describe('generateImage - 나노바나나2 (gemini-3.1-flash-image-preview)', () => {
     beforeEach(async () => {
       const genai = await import('@google/genai')
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const mock = genai as any
-      mock.__mockGenerateImages.mockResolvedValue({
-        generatedImages: [
+      // generateContent가 이미지 인라인데이터를 반환하는 구조로 모킹
+      mock.__mockGenerateContent.mockResolvedValue({
+        candidates: [
           {
-            image: {
-              imageBytes: 'base64encodeddata',
+            content: {
+              parts: [
+                {
+                  inlineData: {
+                    data: 'base64encodedimagedata',
+                    mimeType: 'image/png',
+                  },
+                },
+              ],
             },
           },
         ],
+        text: null,
       })
       initializeClient('test-api-key')
     })
@@ -97,6 +116,71 @@ describe('geminiService', () => {
     it('이미지 생성 성공 - base64 data URL 반환', async () => {
       const result = await generateImage('a beautiful sunset')
       expect(result).toMatch(/^data:image\//)
+      expect(result).toContain('base64encodedimagedata')
+    })
+
+    it('gemini-3.1-flash-image-preview 모델로 호출', async () => {
+      const genai = await import('@google/genai')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mock = genai as any
+      await generateImage('test prompt')
+      expect(mock.__mockGenerateContent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'gemini-3.1-flash-image-preview',
+        }),
+      )
+    })
+
+    it('응답에 이미지 없으면 에러 발생', async () => {
+      const genai = await import('@google/genai')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mock = genai as any
+      mock.__mockGenerateContent.mockResolvedValue({
+        candidates: [{ content: { parts: [{ text: 'no image' }] } }],
+        text: 'no image',
+      })
+      await expect(generateImage('test')).rejects.toThrow('이미지 생성에 실패했습니다.')
+    })
+  })
+
+  describe('generateVideo - Veo 3 Fast (veo-3.1-fast-generate-preview)', () => {
+    beforeEach(async () => {
+      const genai = await import('@google/genai')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mock = genai as any
+      // generateVideos가 즉시 done: true 반환 (폴링 불필요)
+      mock.__mockGenerateVideos.mockResolvedValue({
+        name: 'operations/test-video-op',
+        done: true,
+        response: {
+          generatedVideos: [
+            {
+              video: {
+                videoBytes: 'base64encodedvideodata',
+              },
+            },
+          ],
+        },
+      })
+      initializeClient('test-api-key')
+    })
+
+    it('비디오 생성 성공 - base64 data URL 반환', async () => {
+      const result = await generateVideo('', 'a cat running in the park')
+      expect(result).toMatch(/^data:video\/mp4;base64,/)
+      expect(result).toContain('base64encodedvideodata')
+    })
+
+    it('veo-3.1-fast-generate-preview 모델로 호출', async () => {
+      const genai = await import('@google/genai')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mock = genai as any
+      await generateVideo('', 'test prompt')
+      expect(mock.__mockGenerateVideos).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'veo-3.1-fast-generate-preview',
+        }),
+      )
     })
   })
 
