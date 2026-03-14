@@ -192,6 +192,26 @@ const App: React.FC = () => {
   const [isPlaygroundOpen, setIsPlaygroundOpen] = useState(false); // Playground State
   
   const clipboardRef = useRef<{ nodes: Node[], connections: Connection[] } | null>(null);
+  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const checkApiKey = async () => {
+      if (window.aistudio?.hasSelectedApiKey) {
+        const hasKey = await window.aistudio.hasSelectedApiKey();
+        setHasApiKey(hasKey);
+      } else {
+        setHasApiKey(true); // Fallback if API is not available
+      }
+    };
+    checkApiKey();
+  }, []);
+
+  const handleSelectKey = async () => {
+    if (window.aistudio?.openSelectKey) {
+      await window.aistudio.openSelectKey();
+      setHasApiKey(true); // Assume success to avoid race conditions
+    }
+  };
 
   // Keep nodesRef updated
   useEffect(() => {
@@ -831,7 +851,7 @@ const App: React.FC = () => {
         const gridInstruction = data.gridSize ? `Generate a ${data.gridSize} grid.` : "Generate a 7x6 grid.";
         const fullPrompt = `${prompts.join('\n\n')}\n\n${gridInstruction}`;
 
-        const result = await generateImage(fullPrompt, '4:5', referenceImages, 'gemini-3.1-flash-image-preview');
+        const result = await generateImage(fullPrompt, '3:4', referenceImages, 'gemini-3.1-flash-image-preview');
         const imageUrl = result?.[0] || null;
         if (imageUrl) {
             onAssetGenerated({ type: 'image', url: imageUrl });
@@ -2162,6 +2182,23 @@ const App: React.FC = () => {
         <ProjectControls onSave={() => setIsSaveModalOpen(true)} isSaveModalOpen={isSaveModalOpen} onCloseSaveModal={() => setIsSaveModalOpen(false)} onSaveProject={handleSaveProject} onLoad={() => setIsLoadModalOpen(true)} isLoadModalOpen={isLoadModalOpen} onCloseLoadModal={() => setIsLoadModalOpen(false)} projects={projects} onLoadProject={handleLoadProject} onDeleteProject={handleDeleteProject} onExportProject={handleExportProject} onImportProject={handleImportProject} isSaving={isSaving} onExportCurrentProject={() => setIsExportModalOpen(true)} isExportModalOpen={isExportModalOpen} onCloseExportModal={() => setIsExportModalOpen(false)} onConfirmExport={(name) => { const currentState: ProjectState = { nodes, connections, history: [], panZoom, nodeRenderOrder: nodeRenderOrderRef.current }; const projectToExport: Project = { id: `proj-exported-${Date.now()}`, name: name, createdAt: new Date().toISOString(), state: currentState }; const dataStr = JSON.stringify(projectToExport, null, 2); const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr); const exportFileDefaultName = `${name.replace(/\s/g, '_')}.json`; const linkElement = document.createElement('a'); linkElement.setAttribute('href', dataUri); linkElement.setAttribute('download', exportFileDefaultName); linkElement.click(); setIsExportModalOpen(false); }} onExportPlayground={() => { const currentState: ProjectState = { nodes, connections, history: [], panZoom, nodeRenderOrder: nodeRenderOrderRef.current }; const projectToExport = { ...{ id: `playground-${Date.now()}`, name: 'Playground Export', createdAt: new Date().toISOString(), state: currentState }, type: 'Playground' }; const dataStr = JSON.stringify(projectToExport, null, 2); const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr); const linkElement = document.createElement('a'); linkElement.setAttribute('href', dataUri); linkElement.setAttribute('download', 'playground_workflow.json'); linkElement.click(); }} />
         <PlaygroundModal isOpen={isPlaygroundOpen} onClose={() => setIsPlaygroundOpen(false)} nodes={nodes} onDataChange={updateNodeData} onRun={executeGraph} onGenerateSingle={onGenerateNode} isGenerating={isGeneratingAll} />
       </div>
+
+      {hasApiKey === false && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gray-900/90 backdrop-blur-sm">
+          <div className="bg-gray-800 p-8 rounded-2xl shadow-2xl max-w-md text-center border border-gray-700">
+            <h2 className="text-2xl font-bold text-white mb-4">API Key Required</h2>
+            <p className="text-gray-300 mb-8">
+              To use the advanced image and video generation models, you must select your own Google Gemini API key.
+            </p>
+            <button
+              onClick={handleSelectKey}
+              className="w-full px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold text-white transition-colors shadow-lg"
+            >
+              Select API Key
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

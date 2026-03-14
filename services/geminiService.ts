@@ -53,9 +53,9 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 5): Promise<T> {
  * Removed forced key selection to allow using user's own environment key.
  */
 const getFreshGenAI = async (): Promise<GoogleGenAI> => {
-    const apiKey = process.env.API_KEY;
+    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
     if (!apiKey || apiKey.trim() === "") {
-        throw new Error("API Key is missing. Please ensure process.env.API_KEY is configured.");
+        throw new Error("API Key is missing. Please ensure process.env.API_KEY or process.env.GEMINI_API_KEY is configured.");
     }
     return new GoogleGenAI({ apiKey });
 };
@@ -212,7 +212,7 @@ export const generateText = async (prompt: string, base64Images: string[] | null
         }
     }
     const response = await ai.models.generateContent({
-        model: 'gemini-3-pro-preview',
+        model: 'gemini-3.1-pro-preview',
         contents: { parts },
         config: systemPrompt ? { systemInstruction: systemPrompt } : undefined
     });
@@ -233,17 +233,46 @@ export const generateImage = async (prompt: string, aspectRatio: string, referen
         }
         parts.push({ text: prompt + "\n\nCRITICAL: No text or logos allowed in the image." });
 
+        const config: any = {};
+        if (supportsConfig) {
+            config.imageConfig = { 
+                aspectRatio: aspectRatio || "1:1",
+                imageSize: imageSize || "1K"
+            };
+        } else if (modelName === 'gemini-2.5-flash-image') {
+            config.imageConfig = {
+                aspectRatio: aspectRatio || "1:1"
+            };
+        }
+
         const response = await ai.models.generateContent({
             model: modelName,
             contents: { parts },
-            config: supportsConfig ? { imageConfig: { aspectRatio, imageSize } } : undefined
+            config: Object.keys(config).length > 0 ? config : undefined
         });
         
-        const images = response.candidates?.[0]?.content?.parts
-            .filter(p => p.inlineData)
-            .map(p => `data:${p.inlineData!.mimeType};base64,${p.inlineData!.data}`) || [];
+        const candidate = response.candidates?.[0];
+        if (!candidate) {
+            throw new Error("No response generated. The prompt might have been blocked by safety filters.");
+        }
         
-        return images.length > 0 ? images : null;
+        if (candidate.finishReason === 'SAFETY') {
+            throw new Error("Image generation blocked by safety filters. Please try a different prompt.");
+        }
+
+        const images = candidate.content?.parts
+            ?.filter(p => p.inlineData)
+            .map(p => `data:${p.inlineData!.mimeType || 'image/png'};base64,${p.inlineData!.data}`) || [];
+        
+        if (images.length === 0) {
+            const textParts = candidate.content?.parts?.filter(p => p.text).map(p => p.text).join('\n');
+            if (textParts) {
+                throw new Error(`Model returned text instead of an image: ${textParts}`);
+            }
+            throw new Error("Model did not return an image.");
+        }
+        
+        return images;
     });
 };
 
@@ -355,7 +384,8 @@ export const generateVideo = async (
         if (!uri) throw new Error("Generation finished but no output URI was provided.");
         
         onProgress("Fetching binary...");
-        const downloadLink = `${uri}&key=${process.env.API_KEY}`;
+        const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+        const downloadLink = `${uri}&key=${apiKey}`;
         const videoRes = await fetch(downloadLink);
         if (!videoRes.ok) throw new Error("Failed to download video.");
         const videoBlob = await videoRes.blob();
@@ -428,7 +458,7 @@ export const generateStoryboardScenario = async (prompt: string, img: string) =>
         const dataUrl = await urlToDataURL(img);
         const mimeType = dataUrl.match(/data:(.*?);/)?.[1] || 'image/jpeg';
         const response = await ai.models.generateContent({
-            model: 'gemini-3-pro-preview',
+            model: 'gemini-3.1-pro-preview',
             contents: { parts: [{ text: prompt }, { inlineData: { data: dataUrl.split(',')[1], mimeType } }] },
             config: { 
                 systemInstruction: "Generate a 5-scene video storyboard JSON array with 'koreanDescription' and 'englishPrompt'.",
@@ -448,7 +478,7 @@ export const analyzeProductInfo = async (input: any) => {
     return withRetry(async () => {
         const ai = await getFreshGenAI();
         const response = await ai.models.generateContent({
-            model: 'gemini-3-pro-preview',
+            model: 'gemini-3.1-pro-preview',
             contents: "Analyze inputs and return JSON: {productName, category, concept, sceneConcepts[]}",
             config: { responseMimeType: 'application/json' }
         });
@@ -464,7 +494,7 @@ export const generateScriptFromStyle = async (info: any, style: string, dur: str
     return withRetry(async () => {
         const ai = await getFreshGenAI();
         const response = await ai.models.generateContent({
-            model: 'gemini-3-pro-preview',
+            model: 'gemini-3.1-pro-preview',
             contents: `Create script style ${style} for ${info.productName}`,
             config: { responseMimeType: 'application/json' }
         });
