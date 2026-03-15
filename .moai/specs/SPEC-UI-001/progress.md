@@ -32,6 +32,28 @@
     - loadProject/importProject/drop JSON → loadNodes() 통합
     - updateNodeData 중복 선언 제거 (훅 제공)
   - TypeScript 오류 0건, 전체 276개 테스트 통과 (기존 242 + 신규 34)
+- M4 TDD 완료 (2026-03-15): useNodeGeneration 훅 추출 완료
+  - hooks/useNodeGeneration.ts: AI 노드 생성 상태 관리 훅 구현
+    - UseNodeGenerationOptions: nodes, connections, updateNodeData, addToHistory, executeNodeFn 인터페이스
+    - UseNodeGenerationReturn: generateForNode, cancelGeneration, isGenerating, generatingNodeIds
+    - generatingNodeIds: Set<string>으로 동시 다중 노드 생성 추적
+    - cancelledRef: 취소 플래그로 비동기 작업 중 취소 처리
+    - 생성 시작 시 updateNodeData(nodeId, { isLoading: true }), 완료/오류 시 isLoading: false
+    - executeNodeFn: App.tsx의 Composite/RMBG/일반 노드 분기 로직을 콜백으로 래핑 (wrap 전략)
+  - hooks/__tests__/useNodeGeneration.test.ts: 13개 스펙 테스트 신규 작성 (4개 사이클)
+    - Cycle 1: 생성 상태 관리 (초기상태, isGenerating, 추가/제거, 오류 복구)
+    - Cycle 2: 노드 타입 디스패치 (executeNodeFn 호출, 바이패스 건너뜀, 없는 노드 무시)
+    - Cycle 3: API 키 체크 및 오류 처리 (REQ-AI-009, isLoading 토글)
+    - Cycle 4: 취소 기능 (cancelGeneration, 함수 노출 검증)
+  - App.tsx: useNodeGeneration 훅 통합 완료
+    - import useNodeGeneration 추가
+    - 기존 onGenerateNode useCallback 제거
+    - useNodeGeneration({ executeNodeFn: ... })으로 대체
+    - generateForNode → onGenerateNode로 비구조화 (하위 호환 유지)
+    - generatingNodeIdsFromHook, isNodeGenerating, cancelGeneration 노출
+    - isGeneratingAll (executeGraph 전용) 별도 유지
+  - 구현 편차: executeNode 로직 완전 추출 대신 콜백 래핑 전략 (M4 노트 7번 수용)
+  - TypeScript 오류 0건, 전체 309개 테스트 통과 (기존 296 + 신규 13)
 - M3 TDD 완료 (2026-03-15): useConnections 훅 추출 완료
   - hooks/useConnections.ts: 커넥션 생성/삭제/선택/로드 훅 완전 구현
     - startConnection, completeConnection, cancelConnection, deleteConnections, selectConnection, deleteConnectionsForNodes, loadConnections, updatePendingPath

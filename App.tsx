@@ -66,6 +66,7 @@ import { createNode } from './factories/nodeFactory';
 import { useCanvas } from './hooks/useCanvas';
 import { useNodes } from './hooks/useNodes';
 import { useConnections } from './hooks/useConnections';
+import { useNodeGeneration } from './hooks/useNodeGeneration';
 
 interface DraggableNodeWrapperProps {
   node: Node;
@@ -1913,41 +1914,52 @@ const App: React.FC = () => {
     return executionOrder;
   };
 
-  const onGenerateNode = useCallback(async (nodeId: string) => {
-    const node = nodesRef.current[nodeId]; if (!node || node.isBypassed) return;
-    setNodes(draft => { if(draft[nodeId] && 'isLoading' in draft[nodeId].data) { (draft[nodeId].data as any).isLoading = true; } });
-    try {
-        let updatedNodePartial: Partial<Node> = {};
-        if (node.type === NodeType.Composite) {
-            const data = node.data as CompositeNodeData;
-            if (data.layers.length < 2) { alert("Composite node requires at least 2 image layers for compositing."); updatedNodePartial = { data: { ...data, isLoading: false } }; } else {
-                updatedNodePartial = { data: { ...data, loadingMessage: 'Compositing images...' } };
-                const contentAreaWidth = node.size.width - COMPOSITE_NODE_CONTENT_PADDING_X;
-                const contentAreaHeight = node.size.height - COMPOSITE_NODE_HEADER_HEIGHT - COMPOSITE_NODE_CONTENT_PADDING_Y_TOP - COMPOSITE_NODE_CONTENT_PADDING_Y_BOTTOM - COMPOSITE_NODE_BUTTON_HEIGHT - COMPOSITE_NODE_INTERNAL_SPACING;
-                const result = await compositeImages(data.layers, Math.max(1, contentAreaWidth), Math.max(1, contentAreaHeight));
-                if (result) { onAssetGenerated({ type: 'image', url: result }); }
-                updatedNodePartial = { data: { ...data, outputImageUrl: result, isLoading: false } };
-            }
-        } else if (node.type === NodeType.RMBG) {
-            const data = node.data as RMBGNodeData;
-            if (!data.inputImageUrl) { alert("RMBG node requires an image input."); updatedNodePartial = { data: { ...data, isLoading: false } }; } else {
-                updatedNodePartial = { data: { ...data, loadingMessage: 'Removing background...' } };
-                let resultWithWhiteBg = await removeBackground(data.inputImageUrl); let finalResult: string | null = null;
-                if (resultWithWhiteBg) { if (data.backgroundColor !== '#FFFFFF') { finalResult = await addSolidBackground(resultWithWhiteBg, data.backgroundColor); } else { finalResult = resultWithWhiteBg; } }
-                if (finalResult) { onAssetGenerated({ type: 'image', url: finalResult }); }
-                updatedNodePartial = { data: { ...data, outputImageUrl: finalResult, isLoading: false } };
-            }
-        } else {
-            updatedNodePartial = await executeNode(nodeId, nodesRef.current, connections, (msg: string) => updateNodeData(nodeId, { loadingMessage: msg }), onAssetGenerated);
-        }
-        setNodes(draft => { if (draft[nodeId]) { Object.assign(draft[nodeId], updatedNodePartial); if (updatedNodePartial.data) { draft[nodeId].data = { ...draft[nodeId].data, ...updatedNodePartial.data }; } if ('isLoading' in draft[nodeId].data) { (draft[nodeId].data as any).isLoading = false; } } });
-        const nextNodes = { ...nodesRef.current, [nodeId]: { ...nodesRef.current[nodeId], ...updatedNodePartial, data: { ...nodesRef.current[nodeId].data, ...updatedNodePartial.data } } } as Record<string, Node>;
-        propagateImmediateUpdates([nodeId], nextNodes, connections);
-    } catch (error) {
-        console.error(`Error executing node ${nodeId}:`, error);
-        setNodes(draft => { if(draft[nodeId] && 'isLoading' in draft[nodeId].data) { (draft[nodeId].data as any).isLoading = false; } if(draft[nodeId] && 'loadingMessage' in draft[nodeId].data) { (draft[nodeId].data as any).loadingMessage = `Error: ${error instanceof Error ? error.message : 'Unknown error'}`; } });
-    }
-  }, [nodes, connections, updateNodeData, onAssetGenerated, setNodes, executeNode]);
+  // useNodeGeneration: AI 노드 생성 상태 관리 훅 (SPEC-UI-001 M4)
+  // generatingNodeIds, isGenerating, generateForNode, cancelGeneration 제공
+  const {
+    generateForNode: onGenerateNode,
+    generatingNodeIds: generatingNodeIdsFromHook,
+    isGenerating: isNodeGenerating,
+    cancelGeneration,
+  } = useNodeGeneration({
+    nodes,
+    connections,
+    updateNodeData,
+    addToHistory: onAssetGenerated,
+    // executeNodeFn: 실제 노드 실행 로직 (Composite/RMBG/일반 노드 분기 포함)
+    // @MX:NOTE: M4에서는 기존 executeNode 로직을 그대로 래핑하여 안전하게 통합
+    executeNodeFn: useCallback(async (nodeId: string): Promise<Partial<Node>> => {
+      const node = nodesRef.current[nodeId];
+      if (!node) throw new Error(`Node ${nodeId} not found during execution.`);
+      let updatedNodePartial: Partial<Node> = {};
+      if (node.type === NodeType.Composite) {
+          const data = node.data as CompositeNodeData;
+          if (data.layers.length < 2) { alert("Composite node requires at least 2 image layers for compositing."); updatedNodePartial = { data: { ...data, isLoading: false } }; } else {
+              updatedNodePartial = { data: { ...data, loadingMessage: 'Compositing images...' } };
+              const contentAreaWidth = node.size.width - COMPOSITE_NODE_CONTENT_PADDING_X;
+              const contentAreaHeight = node.size.height - COMPOSITE_NODE_HEADER_HEIGHT - COMPOSITE_NODE_CONTENT_PADDING_Y_TOP - COMPOSITE_NODE_CONTENT_PADDING_Y_BOTTOM - COMPOSITE_NODE_BUTTON_HEIGHT - COMPOSITE_NODE_INTERNAL_SPACING;
+              const result = await compositeImages(data.layers, Math.max(1, contentAreaWidth), Math.max(1, contentAreaHeight));
+              if (result) { onAssetGenerated({ type: 'image', url: result }); }
+              updatedNodePartial = { data: { ...data, outputImageUrl: result, isLoading: false } };
+          }
+      } else if (node.type === NodeType.RMBG) {
+          const data = node.data as RMBGNodeData;
+          if (!data.inputImageUrl) { alert("RMBG node requires an image input."); updatedNodePartial = { data: { ...data, isLoading: false } }; } else {
+              updatedNodePartial = { data: { ...data, loadingMessage: 'Removing background...' } };
+              let resultWithWhiteBg = await removeBackground(data.inputImageUrl); let finalResult: string | null = null;
+              if (resultWithWhiteBg) { if (data.backgroundColor !== '#FFFFFF') { finalResult = await addSolidBackground(resultWithWhiteBg, data.backgroundColor); } else { finalResult = resultWithWhiteBg; } }
+              if (finalResult) { onAssetGenerated({ type: 'image', url: finalResult }); }
+              updatedNodePartial = { data: { ...data, outputImageUrl: finalResult, isLoading: false } };
+          }
+      } else {
+          updatedNodePartial = await executeNode(nodeId, nodesRef.current, connections, (msg: string) => updateNodeData(nodeId, { loadingMessage: msg }), onAssetGenerated);
+      }
+      setNodes(draft => { if (draft[nodeId]) { Object.assign(draft[nodeId], updatedNodePartial); if (updatedNodePartial.data) { draft[nodeId].data = { ...draft[nodeId].data, ...updatedNodePartial.data }; } if ('isLoading' in draft[nodeId].data) { (draft[nodeId].data as any).isLoading = false; } } });
+      const nextNodes = { ...nodesRef.current, [nodeId]: { ...nodesRef.current[nodeId], ...updatedNodePartial, data: { ...nodesRef.current[nodeId].data, ...updatedNodePartial.data } } } as Record<string, Node>;
+      propagateImmediateUpdates([nodeId], nextNodes, connections);
+      return updatedNodePartial;
+    }, [connections, updateNodeData, onAssetGenerated, setNodes, executeNode]),
+  });
 
   const handleSaveProject = async (name: string) => {
     setIsSaving(true);
