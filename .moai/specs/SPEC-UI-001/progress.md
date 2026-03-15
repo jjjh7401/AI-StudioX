@@ -32,3 +32,28 @@
     - loadProject/importProject/drop JSON → loadNodes() 통합
     - updateNodeData 중복 선언 제거 (훅 제공)
   - TypeScript 오류 0건, 전체 276개 테스트 통과 (기존 242 + 신규 34)
+- M3 TDD 완료 (2026-03-15): useConnections 훅 추출 완료
+  - hooks/useConnections.ts: 커넥션 생성/삭제/선택/로드 훅 완전 구현
+    - startConnection, completeConnection, cancelConnection, deleteConnections, selectConnection, deleteConnectionsForNodes, loadConnections, updatePendingPath
+    - useImmer + ref 기반 상태 관리 (React 배치 업데이트 stale closure 방지)
+    - isValidConnection (graphUtils) 활용: 자기 참조, 중복, 순환 모두 방지
+    - 타입 호환성 검사 (ConnectorType 일치), 방향 검증 (output→input)
+    - onConnectionsChanged 콜백 지원
+  - hooks/__tests__/useConnections.test.ts: 20개 스펙 테스트 신규 작성 (6개 사이클)
+    - Cycle 1: 커넥션 생성 흐름 (startConnection, completeConnection, cancelConnection)
+    - Cycle 1 추가: 타입 호환성 (EC-004), 순환/자기 참조 (EC-001, EC-003)
+    - Cycle 2: 커넥션 삭제 (deleteConnections, deleteConnectionsForNodes, EC-002 중복)
+    - Cycle 3: 선택 관리 (selectConnection)
+    - Cycle 4: 로드 (loadConnections)
+    - Cycle 5: 방향 검증 (output→input, input→input 거부)
+    - Cycle 6: onConnectionsChanged 콜백
+  - App.tsx: useConnections 훅 통합 완료
+    - connections/pendingConnection/selectedConnectionId 상태 useConnections로 이전
+    - useImmer<Connection[]> 제거, setConnections 모두 교체
+    - startConnection 래퍼: SVG path ref 초기화 + hookStartConnection 호출
+    - handleEndConnection 래퍼: endConnection + 동적 커넥터 확장 (Text/Image) + 즉시 실행 유지
+    - 키보드 Delete/Ctrl+N: deleteConnections/deleteConnectionsForNodes/loadConnections로 교체
+    - 프로젝트 로드/임포트/드롭: loadConnections로 교체
+    - duplicateNodes/duplicateNode: setConnections → loadConnections로 교체
+    - deleteConnectionsForNodesRef 패턴: useNodes onNodesDeleted와 useConnections 순환 의존성 해결
+  - TypeScript 오류 0건, 전체 296개 테스트 통과 (기존 276 + 신규 20)

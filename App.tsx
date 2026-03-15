@@ -65,6 +65,7 @@ import PlaygroundModal from './components/PlaygroundModal'; // Import Playground
 import { createNode } from './factories/nodeFactory';
 import { useCanvas } from './hooks/useCanvas';
 import { useNodes } from './hooks/useNodes';
+import { useConnections } from './hooks/useConnections';
 
 interface DraggableNodeWrapperProps {
   node: Node;
@@ -165,15 +166,9 @@ const isNodeInsideGroup = (node: Node, group: Node): boolean => {
 
 const App: React.FC = () => {
   const nodesRef = useRef<Record<string, Node>>({}); // 이벤트 핸들러 최신 nodes 접근용 ref
-  const [connections, setConnections] = useImmer<Connection[]>([]);
   const [history, setHistory] = useImmer<HistoryAsset[]>([]);
   // panZoom 상태는 useCanvas 훅으로 이동됨 (SPEC-UI-001 M1)
-  const [pendingConnection, setPendingConnection] = useState<
-    { fromNodeId: string; fromConnector: Connector } | undefined
-  >();
   const selectedNodeIdsRef = useRef<string[]>([]); // 이벤트 핸들러 최신 selectedNodeIds 접근용 ref
-
-  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>('select');
   const [selectionBox, setSelectionBox] = useState<{ x: number, y: number, width: number, height: number } | null>(null);
   const selectionStartPoint = useRef<Point | null>(null);
@@ -196,6 +191,9 @@ const App: React.FC = () => {
   });
   // nodeRenderOrderRef는 저장 시 최신값 접근을 위해 유지
   const nodeRenderOrderRef = useRef<string[]>([]);
+  // deleteConnectionsForNodesRef: useNodes onNodesDeleted 콜백에서 useConnections 메서드 참조용
+  // useConnections 초기화 전에 useNodes가 필요하므로 ref로 순환 의존성 해결
+  const deleteConnectionsForNodesRef = useRef<(nodeIds: string[]) => void>(() => {});
 
   // useNodes: 노드 CRUD, 선택, 이동, 복제, Collapse/Bypass 관리 훅 (SPEC-UI-001 M2)
   // @MX:NOTE: nodes/selectedNodeIds/nodeRenderOrder 상태가 useNodes 훅으로 이동됨
@@ -218,12 +216,28 @@ const App: React.FC = () => {
     getWorldPosition,
     panZoom,
     onNodesDeleted: (nodeIds) => {
-      // 삭제된 노드 연결된 connection 제거
-      setConnections((draft) => draft.filter(
-        (c) => !nodeIds.includes(c.fromNodeId) && !nodeIds.includes(c.toNodeId)
-      ));
+      // 삭제된 노드에 연결된 커넥션 제거 (useConnections 훅의 deleteConnectionsForNodes 위임)
+      deleteConnectionsForNodesRef.current(nodeIds);
     },
   });
+
+  // useConnections: 커넥션 생성/삭제/선택 훅 (SPEC-UI-001 M3)
+  // @MX:NOTE: connections/pendingConnection/selectedConnectionId 상태가 useConnections 훅으로 이동됨
+  const {
+    connections,
+    selectedConnectionId,
+    pendingConnection,
+    startConnection: hookStartConnection,
+    completeConnection: endConnection,
+    cancelConnection,
+    deleteConnections,
+    selectConnection,
+    deleteConnectionsForNodes,
+    loadConnections,
+  } = useConnections({ nodes, getWorldPosition });
+
+  // deleteConnectionsForNodesRef 업데이트: useNodes의 onNodesDeleted에서 참조
+  deleteConnectionsForNodesRef.current = deleteConnectionsForNodes;
 
   // selectedNodeIds: 배열 기반으로 App.tsx 내부 로직에서 사용
   // @MX:NOTE: selectedNodeIds 배열과 useNodes 훅의 Set 상태를 동기화하여 관리 (SPEC-UI-001 M2)
@@ -1405,14 +1419,14 @@ const App: React.FC = () => {
           id: generateId('conn'), fromNodeId: idMap[conn.fromNodeId], fromConnectorId: conn.fromConnectorId, toNodeId: idMap[conn.toNodeId], toConnectorId: conn.toConnectorId
       }));
       setNodes(draft => { newNodes.forEach(node => draft[node.id] = node); });
-      setConnections(draft => { draft.push(...newConnections); });
+      loadConnections([...connections, ...newConnections]);
       setNodeRenderOrder(draft => {
           newNodes.forEach(node => {
               if (node.type === NodeType.Group) { draft.unshift(node.id); } else { draft.push(node.id); }
           });
       });
       if (selectNewNodes) { setSelectedNodeIds(newNodes.map(n => n.id)); }
-  }, [setNodes, setConnections, setNodeRenderOrder]);
+  }, [setNodes, loadConnections, connections, setNodeRenderOrder]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1420,10 +1434,10 @@ const App: React.FC = () => {
       const isCtrlOrMeta = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
       if ((event.key === 'Delete' || event.key === 'Backspace') && (selectedConnectionId || selectedNodeIds.length > 0)) {
-        if (selectedConnectionId) { setConnections(draft => draft.filter(c => c.id !== selectedConnectionId)); setSelectedConnectionId(null); }
+        if (selectedConnectionId) { deleteConnections([selectedConnectionId]); selectConnection(undefined); }
         if (selectedNodeIds.length > 0) {
             setNodes(draft => { selectedNodeIds.forEach(id => { delete draft[id]; }); });
-            setConnections(draft => draft.filter(c => !selectedNodeIds.includes(c.fromNodeId) && !selectedNodeIds.includes(c.toNodeId)));
+            deleteConnectionsForNodes(selectedNodeIds);
             setNodeRenderOrder(draft => draft.filter(id => !selectedNodeIds.includes(id)));
             setSelectedNodeIds([]);
         }
@@ -1440,7 +1454,7 @@ const App: React.FC = () => {
           event.preventDefault(); setIsSaveModalOpen(true);
       } else if (isCtrlOrMeta && key === 'n') {
           event.preventDefault();
-          if (confirm("Create new project? Unsaved changes will be lost.")) { loadNodes({}, []); setConnections([]); setHistory([]); restoreTransform({ x: 0, y: 0, k: 1 }); }
+          if (confirm("Create new project? Unsaved changes will be lost.")) { loadNodes({}, []); loadConnections([]); setHistory([]); restoreTransform({ x: 0, y: 0, k: 1 }); }
       } else {
          switch (key) {
             case 'v': setActiveTool('select'); break;
@@ -1451,8 +1465,9 @@ const App: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => { window.removeEventListener('keydown', handleKeyDown); };
-  }, [selectedConnectionId, selectedNodeIds, setConnections, setNodes, setNodeRenderOrder, nodes, connections, duplicateNodes]);
+  }, [selectedConnectionId, selectedNodeIds, deleteConnections, selectConnection, setNodes, setNodeRenderOrder, nodes, connections, duplicateNodes]);
 
+  // pendingConnection 마우스 이동 이벤트 처리: SVG path ref 업데이트
   const updatePendingPath = useCallback((e: MouseEvent) => {
     if (!pendingConnection || !svgRef.current || !pendingConnectionPathRef.current) return;
     const svgBounds = svgRef.current.getBoundingClientRect();
@@ -1463,13 +1478,14 @@ const App: React.FC = () => {
     pendingConnectionPathRef.current.setAttribute('d', pathData);
   }, [pendingConnection, getConnectorPosition, getWorldPosition]);
 
+  // mouseup 시 pendingConnection path 숨기기 및 연결 취소
   const handleWindowMouseUp = useCallback(() => {
-    if(pendingConnection) {
-        if (pendingConnectionPathRef.current) { pendingConnectionPathRef.current.style.display = 'none'; }
-        setPendingConnection(undefined);
+    if (pendingConnection) {
+      if (pendingConnectionPathRef.current) { pendingConnectionPathRef.current.style.display = 'none'; }
+      cancelConnection();
     }
-  }, [pendingConnection, setPendingConnection]);
-  
+  }, [pendingConnection, cancelConnection]);
+
   useEffect(() => {
     if (pendingConnection) {
       window.addEventListener('mousemove', updatePendingPath);
@@ -1566,17 +1582,16 @@ const App: React.FC = () => {
         });
         setNodes(draft => { newStationaryNodes.forEach(n => { draft[n.id] = n; }); });
         setNodeRenderOrder(draft => { newStationaryNodes.forEach(n => { if (n.type === NodeType.Group) draft.unshift(n.id); else draft.unshift(n.id); }); });
-        setConnections(draft => {
-            const newConnections: Connection[] = [];
-            connections.forEach(conn => {
-                const srcMoving = effectiveIds.includes(conn.fromNodeId);
-                const tgtMoving = effectiveIds.includes(conn.toNodeId);
-                if (srcMoving && !tgtMoving) { const draftConn = draft.find(c => c.id === conn.id); if (draftConn) draftConn.fromNodeId = stationaryMap[conn.fromNodeId]; }
-                else if (!srcMoving && tgtMoving) { const draftConn = draft.find(c => c.id === conn.id); if (draftConn) draftConn.toNodeId = stationaryMap[conn.toNodeId]; }
-                else if (srcMoving && tgtMoving) { newConnections.push({ ...conn, id: generateId('conn'), fromNodeId: stationaryMap[conn.fromNodeId], toNodeId: stationaryMap[conn.toNodeId] }); }
-            });
-            draft.push(...newConnections);
+        const extraConnections: Connection[] = [];
+        const updatedConnections = connections.map(conn => {
+            const srcMoving = effectiveIds.includes(conn.fromNodeId);
+            const tgtMoving = effectiveIds.includes(conn.toNodeId);
+            if (srcMoving && !tgtMoving) { return { ...conn, fromNodeId: stationaryMap[conn.fromNodeId] }; }
+            else if (!srcMoving && tgtMoving) { return { ...conn, toNodeId: stationaryMap[conn.toNodeId] }; }
+            else if (srcMoving && tgtMoving) { extraConnections.push({ ...conn, id: generateId('conn'), fromNodeId: stationaryMap[conn.fromNodeId], toNodeId: stationaryMap[conn.toNodeId] }); return conn; }
+            return conn;
         });
+        loadConnections([...updatedConnections, ...extraConnections]);
     }
   };
 
@@ -1665,7 +1680,7 @@ const App: React.FC = () => {
         window.addEventListener('mousemove', handleWindowSelectionMove);
         window.addEventListener('mouseup', handleWindowSelectionUp);
     }
-    setSelectedNodeIds([]); selectedNodeIdsRef.current = []; setSelectedConnectionId(null);
+    setSelectedNodeIds([]); selectedNodeIdsRef.current = []; selectConnection(undefined);
   };
   
   const handleSvgMouseMove = (e: React.MouseEvent) => {};
@@ -1690,114 +1705,113 @@ const App: React.FC = () => {
       if (hasUpdates) { setNodes(draft => { Object.keys(workingNodes).forEach(id => { if (draft[id]) { if (visited.has(id) || Object.values(workingNodes).some(n => n.id === id)) { draft[id] = workingNodes[id]; } } }); }); }
   };
 
+  // startConnection: useConnections 훅 래퍼 - SVG path ref를 초기화하고 드래그 시작
   const startConnection = (fromNodeId: string, fromConnector: Connector, e: React.MouseEvent) => {
-      setPendingConnection({ fromNodeId, fromConnector });
-      if (pendingConnectionPathRef.current && svgRef.current) {
-        const svgBounds = svgRef.current.getBoundingClientRect();
-        const [worldX, worldY] = getWorldPosition(e.clientX - svgBounds.left, e.clientY - svgBounds.top);
-        const fromPoint = getConnectorPosition(fromNodeId, fromConnector.id, false);
-        const toPoint = { x: worldX, y: worldY }; 
-        const pathData = `M ${fromPoint.x} ${fromPoint.y} C ${fromPoint.x + 75} ${fromPoint.y}, ${toPoint.x - 75} ${toPoint.y}, ${toPoint.x} ${toPoint.y}`;
-        pendingConnectionPathRef.current.setAttribute('d', pathData);
-        const color = ({ [ConnectorType.Text]: '#38bdf8', [ConnectorType.Image]: '#d946ef', [ConnectorType.Video]: '#f59e0b', [ConnectorType.Array]: '#22c55e', }[fromConnector.type] || '#6B7280');
-        pendingConnectionPathRef.current.setAttribute('stroke', color);
-        pendingConnectionPathRef.current.style.display = 'block';
-      }
-  };
-
-  const endConnection = (toNodeId: string, toConnector: Connector) => {
-    if (pendingConnection) {
-        if (pendingConnection.fromNodeId === toNodeId) { setPendingConnection(undefined); return; }
-        const fromNode = nodes[pendingConnection.fromNodeId]; const toNode = nodes[toNodeId];
-        if (!fromNode || !toNode) { setPendingConnection(undefined); return; }
-        const isFromOutput = fromNode.outputs.some(c => c.id === pendingConnection.fromConnector.id);
-        const isToInput = toNode.inputs.some(c => c.id === toConnector.id);
-        if(isFromOutput && isToInput && pendingConnection.fromConnector.type === toConnector.type) {
-            const newConnection: Connection = { id: `conn-${Date.now()}`, fromNodeId: pendingConnection.fromNodeId, fromConnectorId: pendingConnection.fromConnector.id, toNodeId, toConnectorId: toConnector.id, };
-            let connectionAdded = false;
-            const canConnect = () => {
-                const exists = connections.some(c => c.fromNodeId === newConnection.fromNodeId && c.fromConnectorId === newConnection.fromConnectorId && c.toNodeId === newConnection.toNodeId && c.toConnectorId === newConnection.toConnectorId);
-                if (exists) return false;
-                const isImageInput = toConnector.type === ConnectorType.Image; const isListInput = toNode.type === NodeType.List; 
-                const isDynamicImageNode = toNode.type === NodeType.Composite || toNode.type === NodeType.Stitch || toNode.type === NodeType.RMBG || toNode.type === NodeType.Assistant || toNode.type === NodeType.GridShot || toNode.type === NodeType.ImageModify;
-                const isReferenceInput = (toNode.type === NodeType.Video && toConnector.id === 'reference-image-in') || (['Assistant', 'Image', 'ImagePreview', 'ImageEdit', 'GridShot', 'ImageModify'].includes(toNode.type) && (toConnector.id === 'reference-in' || toConnector.id === 'image-in'));
-                const isVideoInput = toConnector.type === ConnectorType.Video;
-                const isArrayInput = toConnector.type === ConnectorType.Array;
-                const inputInUse = !isImageInput && !isListInput && !isDynamicImageNode && !isReferenceInput && !isVideoInput && !isArrayInput && connections.some(c => c.toNodeId === toNodeId && c.toConnectorId === toConnector.id);
-                return !inputInUse;
-            };
-            if (canConnect()) {
-                connectionAdded = true; setConnections(draft => { draft.push(newConnection); });
-                const immediateNodeTypes = [NodeType.Array, NodeType.List, NodeType.PromptConcatenator, NodeType.Composite, NodeType.Stitch, NodeType.RMBG, NodeType.VideoStitch, NodeType.SelectImage];
-                if (immediateNodeTypes.includes(toNode.type)) {
-                    const updatedConnections = [...connections, newConnection];
-                    executeNode(toNodeId, nodes, updatedConnections, (msg) => onVideoProgress(toNodeId, msg), onAssetGenerated)
-                        .then(result => {
-                             setNodes(draft => { if(draft[toNodeId]) { Object.assign(draft[toNodeId], result); if (result.data) { draft[toNodeId].data = { ...draft[toNodeId].data, ...result.data }; } } });
-                             const nextNodes = { ...nodes, [toNodeId]: { ...toNode, ...result, data: { ...toNode.data, ...result.data } } };
-                             propagateImmediateUpdates([toNodeId], nextNodes, updatedConnections);
-                        });
-                }
-            }
-            if (connectionAdded) {
-                const targetTextNodeTypes = [NodeType.Assistant, NodeType.Image, NodeType.ImagePreview, NodeType.ImageEdit, NodeType.Video, NodeType.PromptConcatenator, NodeType.GridShot, NodeType.ImageModify];
-                if (targetTextNodeTypes.includes(toNode.type) && toConnector.type === ConnectorType.Text) {
-                    const textInputs = toNode.inputs.filter(c => c.type === ConnectorType.Text);
-                    const connectedTextInputIds = new Set<string>();
-                    connections.forEach(c => { if (c.toNodeId === toNodeId && toNode.inputs.some(input => input.id === c.toConnectorId && input.type === ConnectorType.Text)) { connectedTextInputIds.add(c.toConnectorId); } });
-                    connectedTextInputIds.add(toConnector.id);
-                    if (textInputs.length === connectedTextInputIds.size) {
-                        setNodes(draft => {
-                            const nodeToUpdate = draft[toNodeId];
-                            if (nodeToUpdate) {
-                                const currentTextInputs = nodeToUpdate.inputs.filter(c => c.type === ConnectorType.Text);
-                                const newIndex = currentTextInputs.length;
-                                const baseName = nodeToUpdate.type === NodeType.Assistant ? 'Text In' : 'Text(Prompt) In';
-                                const newConnector: Connector = { id: `text-in-${newIndex}`, name: `${baseName} ${newIndex + 1}`, type: ConnectorType.Text };
-                                const lastTextIndex = [...nodeToUpdate.inputs].reverse().findIndex(c => c.type === ConnectorType.Text);
-                                const actualLastTextIndex = lastTextIndex === -1 ? -1 : nodeToUpdate.inputs.length - 1 - lastTextIndex;
-                                if (actualLastTextIndex !== -1) {
-                                    nodeToUpdate.inputs.splice(actualLastTextIndex + 1, 0, newConnector);
-                                } else {
-                                    nodeToUpdate.inputs.push(newConnector);
-                                }
-                            }
-                        });
-                    }
-                } else if ([NodeType.Composite, NodeType.Stitch, NodeType.RMBG, NodeType.Assistant, NodeType.ImageModify].includes(toNode.type) && toConnector.type === ConnectorType.Image) {
-                    const imageInputs = toNode.inputs.filter(c => c.type === ConnectorType.Image);
-                    const connectedImageInputIds = new Set<string>();
-                    connections.forEach(c => { if (c.toNodeId === toNodeId && toNode.inputs.some(input => input.id === c.toConnectorId && input.type === ConnectorType.Image)) { connectedImageInputIds.add(c.toConnectorId); } });
-                    connectedImageInputIds.add(toConnector.id);
-                    if (imageInputs.length === connectedImageInputIds.size) {
-                        setNodes(draft => {
-                            const nodeToUpdate = draft[toNodeId];
-                            if (nodeToUpdate) {
-                                const currentImageInputs = nodeToUpdate.inputs.filter(c => c.type === ConnectorType.Image);
-                                const newIndex = currentImageInputs.length;
-                                const newConnector: Connector = { id: `image-in-${newIndex}`, name: `Image In ${newIndex + 1}`, type: ConnectorType.Image };
-                                const lastImageIndex = [...nodeToUpdate.inputs].reverse().findIndex(c => c.type === ConnectorType.Image);
-                                const actualLastImageIndex = lastImageIndex === -1 ? -1 : nodeToUpdate.inputs.length - 1 - lastImageIndex;
-                                if (actualLastImageIndex !== -1) {
-                                    nodeToUpdate.inputs.splice(actualLastImageIndex + 1, 0, newConnector);
-                                } else {
-                                    nodeToUpdate.inputs.push(newConnector);
-                                }
-                            }
-                        });
-                    }
-                }
-            }
-        }
+    if (pendingConnectionPathRef.current && svgRef.current) {
+      const svgBounds = svgRef.current.getBoundingClientRect();
+      const [worldX, worldY] = getWorldPosition(e.clientX - svgBounds.left, e.clientY - svgBounds.top);
+      const fromPoint = getConnectorPosition(fromNodeId, fromConnector.id, false);
+      const toPoint = { x: worldX, y: worldY };
+      const pathData = `M ${fromPoint.x} ${fromPoint.y} C ${fromPoint.x + 75} ${fromPoint.y}, ${toPoint.x - 75} ${toPoint.y}, ${toPoint.x} ${toPoint.y}`;
+      pendingConnectionPathRef.current.setAttribute('d', pathData);
+      const color = ({ [ConnectorType.Text]: '#38bdf8', [ConnectorType.Image]: '#d946ef', [ConnectorType.Video]: '#f59e0b', [ConnectorType.Array]: '#22c55e', }[fromConnector.type] || '#6B7280');
+      pendingConnectionPathRef.current.setAttribute('stroke', color);
+      pendingConnectionPathRef.current.style.display = 'block';
     }
-    if (pendingConnectionPathRef.current) { pendingConnectionPathRef.current.style.display = 'none'; }
-    setPendingConnection(undefined);
+    const svgBounds = svgRef.current?.getBoundingClientRect();
+    const screenX = svgBounds ? e.clientX - svgBounds.left : e.clientX;
+    const screenY = svgBounds ? e.clientY - svgBounds.top : e.clientY;
+    hookStartConnection(fromNodeId, fromConnector, screenX, screenY);
   };
 
-  const handleSelectConnection = (id: string) => { setSelectedConnectionId(id); setSelectedNodeIds([]); selectedNodeIdsRef.current = []; };
+  // endConnection: useConnections 훅의 completeConnection 래퍼
+  // 커넥션 완성 후 동적 커넥터 확장 로직(Text/Image input) 처리
+  const handleEndConnection = (toNodeId: string, toConnector: Connector) => {
+    if (!pendingConnection) return;
+    const fromNodeId = pendingConnection.fromNodeId;
+    const fromConnector = pendingConnection.fromConnector;
+    const fromNode = nodes[fromNodeId];
+    const toNode = nodes[toNodeId];
+
+    // 기존 connection 수 저장 (추가 여부 감지용)
+    const prevCount = connections.length;
+
+    // path 숨기기
+    if (pendingConnectionPathRef.current) { pendingConnectionPathRef.current.style.display = 'none'; }
+
+    // useConnections 훅의 completeConnection 호출
+    endConnection(toNodeId, toConnector);
+
+    // 연결 추가 여부 확인 후 즉시 실행 노드 처리 및 동적 커넥터 추가
+    // (completeConnection은 비동기 상태 업데이트이므로 타이머로 next tick에 확인)
+    // @MX:NOTE: 즉시 실행 및 동적 커넥터 확장은 useConnections의 onConnectionsChanged 콜백 대신
+    // 여기서 직접 처리 (executeNode 등 App.tsx 의존 로직이 많아 분리 유지)
+    setTimeout(() => {
+      const newConnections = connectionsStateRef.current;
+      if (newConnections.length <= prevCount) return; // 연결이 추가되지 않은 경우 무시
+      const newConn = newConnections[newConnections.length - 1];
+      if (newConn.toNodeId !== toNodeId) return;
+
+      if (!fromNode || !toNode) return;
+
+      const immediateNodeTypes = [NodeType.Array, NodeType.List, NodeType.PromptConcatenator, NodeType.Composite, NodeType.Stitch, NodeType.RMBG, NodeType.VideoStitch, NodeType.SelectImage];
+      if (immediateNodeTypes.includes(toNode.type)) {
+        executeNode(toNodeId, nodes, newConnections, (msg) => onVideoProgress(toNodeId, msg), onAssetGenerated)
+          .then(result => {
+            setNodes(draft => { if (draft[toNodeId]) { Object.assign(draft[toNodeId], result); if (result.data) { draft[toNodeId].data = { ...draft[toNodeId].data, ...result.data }; } } });
+            const nextNodes = { ...nodes, [toNodeId]: { ...toNode, ...result, data: { ...toNode.data, ...result.data } } };
+            propagateImmediateUpdates([toNodeId], nextNodes, newConnections);
+          });
+      }
+
+      const targetTextNodeTypes = [NodeType.Assistant, NodeType.Image, NodeType.ImagePreview, NodeType.ImageEdit, NodeType.Video, NodeType.PromptConcatenator, NodeType.GridShot, NodeType.ImageModify];
+      if (targetTextNodeTypes.includes(toNode.type) && toConnector.type === ConnectorType.Text) {
+        const textInputs = toNode.inputs.filter(c => c.type === ConnectorType.Text);
+        const connectedTextInputIds = new Set<string>();
+        newConnections.forEach(c => { if (c.toNodeId === toNodeId && toNode.inputs.some(input => input.id === c.toConnectorId && input.type === ConnectorType.Text)) { connectedTextInputIds.add(c.toConnectorId); } });
+        if (textInputs.length === connectedTextInputIds.size) {
+          setNodes(draft => {
+            const nodeToUpdate = draft[toNodeId];
+            if (nodeToUpdate) {
+              const currentTextInputs = nodeToUpdate.inputs.filter(c => c.type === ConnectorType.Text);
+              const newIndex = currentTextInputs.length;
+              const baseName = nodeToUpdate.type === NodeType.Assistant ? 'Text In' : 'Text(Prompt) In';
+              const newConnector: Connector = { id: `text-in-${newIndex}`, name: `${baseName} ${newIndex + 1}`, type: ConnectorType.Text };
+              const lastTextIndex = [...nodeToUpdate.inputs].reverse().findIndex(c => c.type === ConnectorType.Text);
+              const actualLastTextIndex = lastTextIndex === -1 ? -1 : nodeToUpdate.inputs.length - 1 - lastTextIndex;
+              if (actualLastTextIndex !== -1) { nodeToUpdate.inputs.splice(actualLastTextIndex + 1, 0, newConnector); } else { nodeToUpdate.inputs.push(newConnector); }
+            }
+          });
+        }
+      } else if ([NodeType.Composite, NodeType.Stitch, NodeType.RMBG, NodeType.Assistant, NodeType.ImageModify].includes(toNode.type) && toConnector.type === ConnectorType.Image) {
+        const imageInputs = toNode.inputs.filter(c => c.type === ConnectorType.Image);
+        const connectedImageInputIds = new Set<string>();
+        newConnections.forEach(c => { if (c.toNodeId === toNodeId && toNode.inputs.some(input => input.id === c.toConnectorId && input.type === ConnectorType.Image)) { connectedImageInputIds.add(c.toConnectorId); } });
+        if (imageInputs.length === connectedImageInputIds.size) {
+          setNodes(draft => {
+            const nodeToUpdate = draft[toNodeId];
+            if (nodeToUpdate) {
+              const currentImageInputs = nodeToUpdate.inputs.filter(c => c.type === ConnectorType.Image);
+              const newIndex = currentImageInputs.length;
+              const newConnector: Connector = { id: `image-in-${newIndex}`, name: `Image In ${newIndex + 1}`, type: ConnectorType.Image };
+              const lastImageIndex = [...nodeToUpdate.inputs].reverse().findIndex(c => c.type === ConnectorType.Image);
+              const actualLastImageIndex = lastImageIndex === -1 ? -1 : nodeToUpdate.inputs.length - 1 - lastImageIndex;
+              if (actualLastImageIndex !== -1) { nodeToUpdate.inputs.splice(actualLastImageIndex + 1, 0, newConnector); } else { nodeToUpdate.inputs.push(newConnector); }
+            }
+          });
+        }
+      }
+    }, 0);
+  };
+
+  // connectionsStateRef: handleEndConnection의 setTimeout에서 최신 connections 접근용
+  const connectionsStateRef = useRef<Connection[]>(connections);
+  connectionsStateRef.current = connections;
+
+  const handleSelectConnection = (id: string) => { selectConnection(id); setSelectedNodeIds([]); selectedNodeIdsRef.current = []; };
 
   const handleSelectNode = useCallback((id: string, e?: React.MouseEvent) => {
-    setSelectedConnectionId(null);
+    selectConnection(undefined);
     const isShiftPressed = e?.shiftKey;
     let finalSelectedIds: string[];
     const currentSelectedIds = selectedNodeIdsRef.current;
@@ -1847,7 +1861,7 @@ const App: React.FC = () => {
             try {
                 const content = event.target?.result as string;
                 const project = JSON.parse(content) as Project;
-                if (project.id && project.state) { loadNodes(project.state.nodes, project.state.nodeRenderOrder || Object.keys(project.state.nodes)); setConnections(project.state.connections); setHistory(project.state.history); restoreTransform(project.state.panZoom); if (project.type === 'Playground') { setIsPlaygroundOpen(true); } }
+                if (project.id && project.state) { loadNodes(project.state.nodes, project.state.nodeRenderOrder || Object.keys(project.state.nodes)); loadConnections(project.state.connections); setHistory(project.state.history); restoreTransform(project.state.panZoom); if (project.type === 'Playground') { setIsPlaygroundOpen(true); } }
             } catch (error) { console.error("Failed to parse dropped JSON project:", error); }
         };
         reader.readAsText(file); return;
@@ -1954,7 +1968,7 @@ const App: React.FC = () => {
     const project = projects.find(p => p.id === id);
     if (project) {
       loadNodes(project.state.nodes, project.state.nodeRenderOrder || Object.keys(project.state.nodes));
-      setConnections(project.state.connections);
+      loadConnections(project.state.connections);
       setHistory(project.state.history);
       restoreTransform(project.state.panZoom);
       setIsLoadModalOpen(false);
@@ -1982,7 +1996,7 @@ const App: React.FC = () => {
   const handleImportProject = async (project: Project) => {
     if (project && project.state) {
       loadNodes(project.state.nodes, project.state.nodeRenderOrder || Object.keys(project.state.nodes));
-      setConnections(project.state.connections);
+      loadConnections(project.state.connections);
       setHistory(project.state.history);
       restoreTransform(project.state.panZoom);
 
@@ -2057,7 +2071,7 @@ const App: React.FC = () => {
                   onSizeChange={updateNodeSize}
                   onDataChange={updateNodeData}
                   onStartConnection={(fromNodeId, fromConnector, e) => startConnection(fromNodeId, fromConnector, e)}
-                  onEndConnection={endConnection}
+                  onEndConnection={handleEndConnection}
                   onDeleteNode={deleteNode}
                   onCopyNode={copyNode}
                   onGenerateNode={onGenerateNode}
@@ -2098,7 +2112,7 @@ const App: React.FC = () => {
                   onSizeChange={updateNodeSize}
                   onDataChange={updateNodeData}
                   onStartConnection={(fromNodeId, fromConnector, e) => startConnection(fromNodeId, fromConnector, e)}
-                  onEndConnection={endConnection}
+                  onEndConnection={handleEndConnection}
                   onDeleteNode={deleteNode}
                   onCopyNode={copyNode}
                   onGenerateNode={onGenerateNode}
