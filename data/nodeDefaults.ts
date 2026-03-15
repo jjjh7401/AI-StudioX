@@ -3,7 +3,7 @@
 import { NodeType, ConnectorType } from '../types';
 import type { Connector } from '../types';
 
-export interface NodeDefault {
+interface NodeDefault {
   defaultSize: { width: number; height: number };
   inputs: Array<{ id: string; name: string; type: ConnectorType }>;
   outputs: Array<{ id: string; name: string; type: ConnectorType }>;

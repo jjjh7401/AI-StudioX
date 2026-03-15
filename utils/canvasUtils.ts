@@ -4,7 +4,7 @@
 /**
  * 변환(pan/zoom) 정보를 담는 타입
  */
-export interface Transform {
+interface Transform {
   x: number;
   y: number;
   k: number;
@@ -13,7 +13,7 @@ export interface Transform {
 /**
  * 2D 좌표를 담는 타입
  */
-export interface Vec2 {
+interface Vec2 {
   x: number;
   y: number;
 }
@@ -21,7 +21,7 @@ export interface Vec2 {
 /**
  * 노드의 월드 좌표 경계를 담는 타입
  */
-export interface NodeBounds {
+interface NodeBounds {
   x: number;
   y: number;
   width: number;
@@ -31,7 +31,7 @@ export interface NodeBounds {
 /**
  * 뷰포트 정보를 담는 타입
  */
-export interface ViewportBounds {
+interface ViewportBounds {
   x: number;
   y: number;
   width: number;
