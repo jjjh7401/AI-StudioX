@@ -64,6 +64,7 @@ import { CATEGORY_STYLES } from './data/scriptStyles';
 import PlaygroundModal from './components/PlaygroundModal'; // Import Playground Modal
 import { createNode } from './factories/nodeFactory';
 import { useCanvas } from './hooks/useCanvas';
+import { useNodes } from './hooks/useNodes';
 
 interface DraggableNodeWrapperProps {
   node: Node;
@@ -163,17 +164,15 @@ const isNodeInsideGroup = (node: Node, group: Node): boolean => {
 };
 
 const App: React.FC = () => {
-  const [nodes, setNodes] = useImmer<Record<string, Node>>({});
-  const nodesRef = useRef(nodes); // Ref to access latest nodes in event listeners
+  const nodesRef = useRef<Record<string, Node>>({}); // 이벤트 핸들러 최신 nodes 접근용 ref
   const [connections, setConnections] = useImmer<Connection[]>([]);
   const [history, setHistory] = useImmer<HistoryAsset[]>([]);
   // panZoom 상태는 useCanvas 훅으로 이동됨 (SPEC-UI-001 M1)
   const [pendingConnection, setPendingConnection] = useState<
     { fromNodeId: string; fromConnector: Connector } | undefined
   >();
-  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
-  const selectedNodeIdsRef = useRef(selectedNodeIds); // Keep ref in sync for event handlers
-  
+  const selectedNodeIdsRef = useRef<string[]>([]); // 이벤트 핸들러 최신 selectedNodeIds 접근용 ref
+
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>('select');
   const [selectionBox, setSelectionBox] = useState<{ x: number, y: number, width: number, height: number } | null>(null);
@@ -197,7 +196,45 @@ const App: React.FC = () => {
   });
   // nodeRenderOrderRef는 저장 시 최신값 접근을 위해 유지
   const nodeRenderOrderRef = useRef<string[]>([]);
-  const [nodeRenderOrder, setNodeRenderOrder] = useImmer<string[]>([]);
+
+  // useNodes: 노드 CRUD, 선택, 이동, 복제, Collapse/Bypass 관리 훅 (SPEC-UI-001 M2)
+  // @MX:NOTE: nodes/selectedNodeIds/nodeRenderOrder 상태가 useNodes 훅으로 이동됨
+  const {
+    nodes,
+    nodeRenderOrder,
+    addNode: hookAddNode,
+    deleteNodes,
+    duplicateNode: hookDuplicateNode,
+    updateNodeData,
+    moveNodes,
+    resizeNode: hookResizeNode,
+    toggleCollapse: handleToggleCollapse,
+    toggleBypass: handleToggleBypass,
+    setNodes,
+    setNodeRenderOrder,
+    setSelectedNodeIds: setSelectedNodeIdsInHook,
+    loadNodes,
+  } = useNodes({
+    getWorldPosition,
+    panZoom,
+    onNodesDeleted: (nodeIds) => {
+      // 삭제된 노드 연결된 connection 제거
+      setConnections((draft) => draft.filter(
+        (c) => !nodeIds.includes(c.fromNodeId) && !nodeIds.includes(c.toNodeId)
+      ));
+    },
+  });
+
+  // selectedNodeIds: 배열 기반으로 App.tsx 내부 로직에서 사용
+  // @MX:NOTE: selectedNodeIds 배열과 useNodes 훅의 Set 상태를 동기화하여 관리 (SPEC-UI-001 M2)
+  const [selectedNodeIds, setSelectedNodeIdsLocal] = useState<string[]>([]);
+
+  // setSelectedNodeIds: 로컬 배열 상태 + 훅 Set 상태 + ref 동기화
+  const setSelectedNodeIds = useCallback((ids: string[]) => {
+    setSelectedNodeIdsLocal(ids);
+    setSelectedNodeIdsInHook(ids);
+    selectedNodeIdsRef.current = ids;
+  }, [setSelectedNodeIdsInHook]);
   
   const [projects, setProjects] = useImmer<Project[]>([]);
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
@@ -363,13 +400,7 @@ const App: React.FC = () => {
     return { x, y };
   }, [nodes]);
 
-  const updateNodeData = useCallback((id: string, data: Partial<NodeData>) => {
-    setNodes(draft => {
-      if(draft[id]) {
-        draft[id].data = { ...draft[id].data, ...data } as any;
-      }
-    });
-  }, [setNodes]);
+  // updateNodeData는 useNodes 훅에서 제공됨 (SPEC-UI-001 M2)
 
   const onVideoProgress = useCallback((nodeId: string, message: string) => {
     setNodes(draft => {
@@ -1221,7 +1252,8 @@ const App: React.FC = () => {
                     name: `Image Out ${i + 1}`,
                     type: ConnectorType.Image
                 });
-                updateNodeData(nodeId, { scriptData: { ...scriptDataFromApi!, shotList: currentShots }, outputs: newOutputs });
+                // outputs는 NodeData 타입이 아니므로 setNodes로 직접 업데이트
+                setNodes(draft => { if(draft[nodeId]) { draft[nodeId].data = { ...draft[nodeId].data, scriptData: { ...scriptDataFromApi!, shotList: currentShots } } as any; draft[nodeId].outputs = newOutputs; } });
             }
         }
 
@@ -1408,7 +1440,7 @@ const App: React.FC = () => {
           event.preventDefault(); setIsSaveModalOpen(true);
       } else if (isCtrlOrMeta && key === 'n') {
           event.preventDefault();
-          if (confirm("Create new project? Unsaved changes will be lost.")) { setNodes({}); setConnections([]); setHistory([]); restoreTransform({ x: 0, y: 0, k: 1 }); }
+          if (confirm("Create new project? Unsaved changes will be lost.")) { loadNodes({}, []); setConnections([]); setHistory([]); restoreTransform({ x: 0, y: 0, k: 1 }); }
       } else {
          switch (key) {
             case 'v': setActiveTool('select'); break;
@@ -1449,7 +1481,9 @@ const App: React.FC = () => {
     }
   }, [pendingConnection, updatePendingPath, handleWindowMouseUp]);
 
-  const addNode = (type: NodeType) => {
+  // addNode: 화면 중앙 좌표를 계산하여 훅의 addNode에 전달
+  // useNodes 훅의 getWorldPosition을 화면 중앙 좌표로 호출하기 위해 래퍼 유지
+  const addNode = useCallback((type: NodeType) => {
     const id = `${type}-${Date.now()}`;
     let x = 100; let y = 100;
     if (svgRef.current) {
@@ -1476,22 +1510,17 @@ const App: React.FC = () => {
 
     setNodes(draft => { draft[id] = newNode; });
     setNodeRenderOrder(draft => { if (type === NodeType.Group) { draft.unshift(id); } else { draft.push(id); } });
-  };
+  }, [getWorldPosition, setNodes, setNodeRenderOrder]);
 
+  // deleteNode: useNodes 훅의 deleteNodes 래퍼 (단일 노드 삭제)
   const deleteNode = useCallback((id: string) => {
-    setNodes(draft => { delete draft[id]; });
-    setConnections(draft => draft.filter(c => c.fromNodeId !== id && c.toNodeId !== id));
-    setNodeRenderOrder(draft => draft.filter(nodeId => nodeId !== id));
-  }, [setNodes, setConnections, setNodeRenderOrder]);
+    deleteNodes([id]);
+  }, [deleteNodes]);
 
+  // copyNode: useNodes 훅의 duplicateNode 래퍼
   const copyNode = useCallback((id: string) => {
-    const originalNode = nodes[id];
-    if (!originalNode) return;
-    const newId = `${originalNode.type}-${Date.now()}`;
-    const newNode: Node = { ...originalNode, id: newId, position: { x: originalNode.position.x + 20, y: originalNode.position.y + 20 }, isBypassed: false };
-    setNodes(draft => { draft[newId] = newNode; });
-    setNodeRenderOrder(draft => { if (newNode.type === NodeType.Group) { draft.unshift(newId); } else { draft.push(newId); } });
-  }, [nodes, setNodes, setNodeRenderOrder]);
+    hookDuplicateNode(id);
+  }, [hookDuplicateNode]);
 
   const handleNodeDrag = (e: DraggableEvent, data: any, draggedNodeId: string) => {
     const deltaX = data.deltaX / panZoom.k;
@@ -1551,53 +1580,13 @@ const App: React.FC = () => {
     }
   };
 
+  // updateNodeSize: useNodes 훅의 resizeNode 래퍼 (최소 크기 적용 없이 직접 설정)
+  // @MX:NOTE: 컴포넌트에서 전달되는 newSize는 이미 최소 크기가 적용된 값
   const updateNodeSize = useCallback((id: string, newSize: {width: number, height: number}) => {
     setNodes(draft => { if(draft[id]) { draft[id].size = newSize; } });
   }, [setNodes]);
 
-  const handleToggleBypass = useCallback((id: string) => {
-    setNodes(draft => {
-        const node = draft[id];
-        if (node) {
-            const newBypassState = !node.isBypassed;
-            node.isBypassed = newBypassState;
-            if (node.type === NodeType.Group) {
-                Object.keys(draft).forEach(key => {
-                    const otherNode = draft[key];
-                    if (otherNode.id !== id && isNodeInsideGroup(otherNode as unknown as Node, node as unknown as Node)) { otherNode.isBypassed = newBypassState; }
-                });
-            }
-        }
-    });
-  }, [setNodes]);
-
-  const handleToggleCollapse = useCallback((id: string) => {
-    setNodes(draft => {
-        const node = draft[id];
-        if (node) {
-            if (node.type === NodeType.Group) {
-                const groupData = node.data as GroupNodeData;
-                if (node.isCollapsed) {
-                    node.isCollapsed = false;
-                    if (node.expandedSize) { node.size = node.expandedSize; }
-                    delete node.expandedSize;
-                    if (groupData.containedNodeIds) { groupData.containedNodeIds.forEach(childId => { if (draft[childId]) { draft[childId].hidden = false; } }); groupData.containedNodeIds = []; }
-                } else {
-                    node.isCollapsed = true; node.expandedSize = node.size; node.size = { width: 200, height: 60 };
-                    const containedIds: string[] = [];
-                    Object.keys(draft).forEach(key => {
-                        const otherNode = draft[key];
-                        if (otherNode.id !== id && !otherNode.hidden && isNodeInsideGroup(otherNode as unknown as Node, node as unknown as Node)) { otherNode.hidden = true; containedIds.push(otherNode.id); }
-                    });
-                    groupData.containedNodeIds = containedIds;
-                }
-            } else {
-                if (node.isCollapsed) { node.isCollapsed = false; if (node.expandedSize) { node.size = node.expandedSize; } delete node.expandedSize; }
-                else { node.isCollapsed = true; node.expandedSize = node.size; node.size = { width: 200, height: 40 }; }
-            }
-        }
-    });
-  }, [setNodes]);
+  // handleToggleBypass, handleToggleCollapse는 useNodes 훅에서 제공됨 (SPEC-UI-001 M2)
 
   const handleWindowSelectionMove = useCallback((e: MouseEvent) => {
       if (activeTool !== 'select' || !selectionStartPoint.current || !svgRef.current) return;
@@ -1858,7 +1847,7 @@ const App: React.FC = () => {
             try {
                 const content = event.target?.result as string;
                 const project = JSON.parse(content) as Project;
-                if (project.id && project.state) { setNodes(project.state.nodes); setConnections(project.state.connections); setHistory(project.state.history); restoreTransform(project.state.panZoom); setNodeRenderOrder(project.state.nodeRenderOrder || Object.keys(project.state.nodes)); if (project.type === 'Playground') { setIsPlaygroundOpen(true); } }
+                if (project.id && project.state) { loadNodes(project.state.nodes, project.state.nodeRenderOrder || Object.keys(project.state.nodes)); setConnections(project.state.connections); setHistory(project.state.history); restoreTransform(project.state.panZoom); if (project.type === 'Playground') { setIsPlaygroundOpen(true); } }
             } catch (error) { console.error("Failed to parse dropped JSON project:", error); }
         };
         reader.readAsText(file); return;
@@ -1964,11 +1953,10 @@ const App: React.FC = () => {
   const handleLoadProject = (id: string) => {
     const project = projects.find(p => p.id === id);
     if (project) {
-      setNodes(project.state.nodes);
+      loadNodes(project.state.nodes, project.state.nodeRenderOrder || Object.keys(project.state.nodes));
       setConnections(project.state.connections);
       setHistory(project.state.history);
       restoreTransform(project.state.panZoom);
-      setNodeRenderOrder(project.state.nodeRenderOrder || Object.keys(project.state.nodes));
       setIsLoadModalOpen(false);
     }
   };
@@ -1993,11 +1981,10 @@ const App: React.FC = () => {
 
   const handleImportProject = async (project: Project) => {
     if (project && project.state) {
-      setNodes(project.state.nodes);
+      loadNodes(project.state.nodes, project.state.nodeRenderOrder || Object.keys(project.state.nodes));
       setConnections(project.state.connections);
       setHistory(project.state.history);
       restoreTransform(project.state.panZoom);
-      setNodeRenderOrder(project.state.nodeRenderOrder || Object.keys(project.state.nodes));
 
       // Also add to projects list if it doesn't exist
       if (!projects.find(p => p.id === project.id)) {

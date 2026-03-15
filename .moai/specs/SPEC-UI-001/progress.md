@@ -19,3 +19,16 @@
   - hooks/__tests__/useCanvas.test.ts: 15개 스펙 테스트 신규 작성 (panZoom 초기상태, restoreTransform, D3 zoom 초기화, zoomIn/Out, zoomToFit, getWorldPosition)
   - App.tsx: useCanvas 훅 통합 완료 - 구 panZoom state/zoomBehaviorRef/isMiddleMousePanning/D3 zoom useEffect 제거, d3.zoomTransform 11개 호출 → getWorldPosition으로 교체, ZoomControls inline handlers 정리
   - TypeScript 오류 0건, 전체 242개 테스트 통과 (기존 227 + 신규 15)
+- M2 TDD 완료 (2026-03-15): useNodes 훅 추출 완료
+  - hooks/useNodes.ts: 노드 CRUD/선택/이동/복제/Collapse/Bypass 관리 훅 완전 구현
+    - addNode, deleteNodes, duplicateNode, updateNodeData, moveNodes, resizeNode, toggleCollapse, toggleBypass, selectNode, clearSelection, bringToFront, loadNodes
+    - useImmer 기반 nodes/nodeRenderOrder 상태, Set 기반 selectedNodeIds
+    - onNodesDeleted 콜백으로 connection 정리 위임 패턴 적용
+  - hooks/__tests__/useNodes.test.ts: 34개 스펙 테스트 신규 작성 (5개 사이클: CRUD/상태업데이트/이동&크기/선택/유틸리티)
+  - App.tsx: useNodes 훅 통합 완료
+    - nodes/selectedNodeIds/nodeRenderOrder 상태를 useNodes 훅으로 위임
+    - handleToggleCollapse/handleToggleBypass 기존 선언 제거 (훅 제공)
+    - deleteNode → deleteNodes 래퍼, copyNode → hookDuplicateNode 래퍼
+    - loadProject/importProject/drop JSON → loadNodes() 통합
+    - updateNodeData 중복 선언 제거 (훅 제공)
+  - TypeScript 오류 0건, 전체 276개 테스트 통과 (기존 242 + 신규 34)
