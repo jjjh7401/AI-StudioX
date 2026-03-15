@@ -94,3 +94,16 @@
     - deleteConnectionsForNodesRef 패턴: useNodes onNodesDeleted와 useConnections 순환 의존성 해결
   - TypeScript 오류 0건, 전체 296개 테스트 통과 (기존 276 + 신규 20)
 - Phase Sync 완료: SPEC 상태 completed 업데이트, 구현 완료 노트 추가, 문서 동기화 완료 (2026-03-15)
+- M5 App.tsx 통합 완료 (2026-03-15): useUndoRedo/useKeyboardShortcuts/useProjectManager App.tsx에 완전 통합
+  - undoPushTimerRef + useUndoRedo 연결 (300ms 디바운스 pushState, Ctrl+Z → undoState)
+  - useKeyboardShortcuts 위임 (Delete/B/Ctrl+D/Ctrl+Z/Ctrl+A 5개 단축키)
+  - useProjectManager 위임 (pmSaveProject/pmLoadProject/pmDeleteProject)
+  - projects 상태를 훅으로 완전 이전, handleImportProject는 직접 saveProjectsList 유지
+  - TypeScript 오류 0건, 전체 349개→376개 통합 테스트 통과
+- Dead Code Cleanup (2026-03-15): 미사용 export 5개 제거
+  - canvasUtils.ts: Transform, Vec2, NodeBounds, ViewportBounds 인터페이스 export 제거 (파일 내부 타입)
+  - nodeDefaults.ts: NodeDefault 인터페이스 export 제거 (외부 참조 없음)
+- 커버리지 개선 완료 (2026-03-15): +27개 테스트, 376개 전체 통과
+  - Stmts: 84.1% → 93.25% (목표 85% 초과 달성)
+  - Branch: 68.95% → 86.28% (목표 75% 초과 달성)
+  - 추가된 테스트: useNodes(+14), useCanvas(+5), useProjectManager(+4), useKeyboardShortcuts(+3), graphUtils(+2), useConnections(+2), useUndoRedo(+2)

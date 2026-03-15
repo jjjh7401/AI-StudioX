@@ -253,20 +253,20 @@ TDD (Red-Green-Refactor) 기반 점진적 리팩토링
 - `nodeDefaults.ts` — 노드 타입별 기본값 및 메타데이터
 
 ### 테스트 결과
-- 총 349개 테스트 통과 (12개 테스트 파일)
+- 총 376개 테스트 통과 (12개 테스트 파일)
 - TypeScript 오류: 0건
-- 커버리지: ~84% (Statement)
+- 커버리지: 93.25% (Statement), 86.28% (Branch)
 
 ### 테스트 파일
-- `hooks/__tests__/useCanvas.test.ts` — 15개 테스트
-- `hooks/__tests__/useNodes.test.ts` — 34개 테스트
-- `hooks/__tests__/useConnections.test.ts` — 20개 테스트
+- `hooks/__tests__/useCanvas.test.ts` — 20개 테스트
+- `hooks/__tests__/useNodes.test.ts` — 48개 테스트
+- `hooks/__tests__/useConnections.test.ts` — 22개 테스트
 - `hooks/__tests__/useNodeGeneration.test.ts` — 13개 테스트
-- `hooks/__tests__/useProjectManager.test.ts` — 14개 테스트
-- `hooks/__tests__/useKeyboardShortcuts.test.ts` — 11개 테스트
-- `hooks/__tests__/useUndoRedo.test.ts` — 15개 테스트
+- `hooks/__tests__/useProjectManager.test.ts` — 18개 테스트
+- `hooks/__tests__/useKeyboardShortcuts.test.ts` — 14개 테스트
+- `hooks/__tests__/useUndoRedo.test.ts` — 17개 테스트
 - `utils/__tests__/canvasUtils.test.ts` — 18개 테스트
-- `utils/__tests__/graphUtils.test.ts` — 25개 테스트
+- `utils/__tests__/graphUtils.test.ts` — 27개 테스트
 - `utils/__tests__/dataFlowUtils.test.ts` — 16개 테스트
 - `factories/__tests__/nodeFactory.test.ts` — 21개 테스트
 - `data/__tests__/nodeDefaults.test.ts` — 13개 테스트

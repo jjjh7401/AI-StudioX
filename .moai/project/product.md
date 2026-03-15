@@ -144,7 +144,7 @@ StudioX v1은 Google Gemini AI와 실시간 노드 기반 워크플로우를 결
   - 7개 커스텀 훅으로 App.tsx 핵심 로직 분리 (useCanvas, useNodes, useConnections, useNodeGeneration, useProjectManager, useKeyboardShortcuts, useUndoRedo)
   - 3개 순수 유틸리티 모듈 (canvasUtils, graphUtils, dataFlowUtils)
   - 팩토리 패턴 기반 노드 생성 자동화 (nodeFactory, nodeDefaults)
-  - TDD 기반 349개 테스트 작성 (TypeScript 0 오류, ~84% 커버리지)
+  - TDD 기반 376개 테스트 작성 (TypeScript 0 오류, 93.25% 커버리지)
 
 **진행 중인 개선**:
 - 성능 최적화 및 렌더링 효율화
