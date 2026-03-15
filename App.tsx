@@ -63,6 +63,7 @@ import { storeAsset, getAsset, dataURLToBlob, saveProjectsList, getProjectsList 
 import { CATEGORY_STYLES } from './data/scriptStyles';
 import PlaygroundModal from './components/PlaygroundModal'; // Import Playground Modal
 import { createNode } from './factories/nodeFactory';
+import { useCanvas } from './hooks/useCanvas';
 
 interface DraggableNodeWrapperProps {
   node: Node;
@@ -166,7 +167,7 @@ const App: React.FC = () => {
   const nodesRef = useRef(nodes); // Ref to access latest nodes in event listeners
   const [connections, setConnections] = useImmer<Connection[]>([]);
   const [history, setHistory] = useImmer<HistoryAsset[]>([]);
-  const [panZoom, setPanZoom] = useState<PanZoom>({ x: 0, y: 0, k: 1 });
+  // panZoom 상태는 useCanvas 훅으로 이동됨 (SPEC-UI-001 M1)
   const [pendingConnection, setPendingConnection] = useState<
     { fromNodeId: string; fromConnector: Connector } | undefined
   >();
@@ -180,8 +181,21 @@ const App: React.FC = () => {
   const svgRef = useRef<SVGSVGElement>(null);
   const pendingConnectionPathRef = useRef<SVGPathElement>(null);
   const [isGeneratingAll, setIsGeneratingAll] = useState(false);
-  const [isMiddleMousePanning, setIsMiddleMousePanning] = useState(false);
-  const zoomBehaviorRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  // useCanvas: D3 zoom/pan 로직을 훅으로 분리 (SPEC-UI-001 M1)
+  const {
+    panZoom,
+    zoomIn,
+    zoomOut,
+    zoomToFit,
+    getWorldPosition,
+    restoreTransform,
+    isMiddleMousePanning,
+  } = useCanvas({
+    svgRef,
+    activeTool,
+    onPanZoomChange: () => {}, // panZoom 상태는 훅 내부에서 관리됨
+  });
+  // nodeRenderOrderRef는 저장 시 최신값 접근을 위해 유지
   const nodeRenderOrderRef = useRef<string[]>([]);
   const [nodeRenderOrder, setNodeRenderOrder] = useImmer<string[]>([]);
   
@@ -1308,44 +1322,7 @@ const App: React.FC = () => {
     nodeRenderOrderRef.current = nodeRenderOrder;
   }, [nodeRenderOrder]);
 
-  useEffect(() => {
-    const svg = d3.select(svgRef.current);
-    if (!svg.node()) return;
-
-    const zoom = d3
-      .zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.2, 3])
-      .filter((event: MouseEvent) => {
-        const isNode = !!(event.target as Element).closest('.node-body');
-        if (isNode) return false;
-        if (event.type === 'wheel') return true;
-        if (event.type === 'mousedown' && activeTool === 'pan') return true;
-        if (event.type === 'mousedown' && activeTool === 'select' && event.button === 1) {
-            return true;
-        }
-        return false;
-      })
-      .on('start', (event) => {
-        if (activeTool === 'select' && event.sourceEvent && (event.sourceEvent as MouseEvent).button === 1) {
-            setIsMiddleMousePanning(true);
-        }
-      })
-      .on('zoom', (event) => {
-        setPanZoom(event.transform);
-      })
-      .on('end', () => {
-        setIsMiddleMousePanning(false);
-      });
-      
-    zoomBehaviorRef.current = zoom;
-    svg.call(zoom);
-    svg.on('dblclick.zoom', null);
-
-    return () => {
-        svg.on('.zoom', null);
-    };
-
-  }, [activeTool]);
+  // D3 zoom useEffect는 useCanvas 훅으로 이동됨 (SPEC-UI-001 M1)
 
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
@@ -1431,7 +1408,7 @@ const App: React.FC = () => {
           event.preventDefault(); setIsSaveModalOpen(true);
       } else if (isCtrlOrMeta && key === 'n') {
           event.preventDefault();
-          if (confirm("Create new project? Unsaved changes will be lost.")) { setNodes({}); setConnections([]); setHistory([]); setPanZoom({ x: 0, y: 0, k: 1 }); }
+          if (confirm("Create new project? Unsaved changes will be lost.")) { setNodes({}); setConnections([]); setHistory([]); restoreTransform({ x: 0, y: 0, k: 1 }); }
       } else {
          switch (key) {
             case 'v': setActiveTool('select'); break;
@@ -1447,13 +1424,12 @@ const App: React.FC = () => {
   const updatePendingPath = useCallback((e: MouseEvent) => {
     if (!pendingConnection || !svgRef.current || !pendingConnectionPathRef.current) return;
     const svgBounds = svgRef.current.getBoundingClientRect();
-    const currentTransform = d3.zoomTransform(svgRef.current);
-    const [worldX, worldY] = currentTransform.invert([e.clientX - svgBounds.left, e.clientY - svgBounds.top]);
+    const [worldX, worldY] = getWorldPosition(e.clientX - svgBounds.left, e.clientY - svgBounds.top);
     const fromPoint = getConnectorPosition(pendingConnection.fromNodeId, pendingConnection.fromConnector.id, false);
     const toPoint = { x: worldX, y: worldY };
     const pathData = `M ${fromPoint.x} ${fromPoint.y} C ${fromPoint.x + 75} ${fromPoint.y}, ${toPoint.x - 75} ${toPoint.y}, ${toPoint.x} ${toPoint.y}`;
     pendingConnectionPathRef.current.setAttribute('d', pathData);
-  }, [pendingConnection, getConnectorPosition]);
+  }, [pendingConnection, getConnectorPosition, getWorldPosition]);
 
   const handleWindowMouseUp = useCallback(() => {
     if(pendingConnection) {
@@ -1478,8 +1454,7 @@ const App: React.FC = () => {
     let x = 100; let y = 100;
     if (svgRef.current) {
         const svgBounds = svgRef.current.getBoundingClientRect();
-        const currentTransform = d3.zoomTransform(svgRef.current);
-        const [worldX, worldY] = currentTransform.invert([svgBounds.width / 2, svgBounds.height / 2]);
+        const [worldX, worldY] = getWorldPosition(svgBounds.width / 2, svgBounds.height / 2);
         x = worldX; y = worldY;
     }
     // 대부분의 노드: 기본 위치 오프셋
@@ -1627,13 +1602,12 @@ const App: React.FC = () => {
   const handleWindowSelectionMove = useCallback((e: MouseEvent) => {
       if (activeTool !== 'select' || !selectionStartPoint.current || !svgRef.current) return;
       const svgBounds = svgRef.current.getBoundingClientRect();
-      const currentTransform = d3.zoomTransform(svgRef.current);
-      const [movedX, movedY] = currentTransform.invert([e.clientX - svgBounds.left, e.clientY - svgBounds.top]);
+      const [movedX, movedY] = getWorldPosition(e.clientX - svgBounds.left, e.clientY - svgBounds.top);
       setSelectionBox({
           x: Math.min(selectionStartPoint.current.x, movedX), y: Math.min(selectionStartPoint.current.y, movedY),
           width: Math.abs(selectionStartPoint.current.x - movedX), height: Math.abs(selectionStartPoint.current.y - movedY),
       });
-  }, [activeTool]);
+  }, [activeTool, getWorldPosition]);
 
   const handleWindowSelectionUp = useCallback((e: MouseEvent) => {
       if (activeTool !== 'select' || !selectionStartPoint.current || !svgRef.current) {
@@ -1642,8 +1616,7 @@ const App: React.FC = () => {
            return;
       }
       const svgBounds = svgRef.current.getBoundingClientRect();
-      const currentTransform = d3.zoomTransform(svgRef.current);
-      const [movedX, movedY] = currentTransform.invert([e.clientX - svgBounds.left, e.clientY - svgBounds.top]);
+      const [movedX, movedY] = getWorldPosition(e.clientX - svgBounds.left, e.clientY - svgBounds.top);
       const finalBox = {
           x: Math.min(selectionStartPoint.current.x, movedX), y: Math.min(selectionStartPoint.current.y, movedY),
           width: Math.abs(selectionStartPoint.current.x - movedX), height: Math.abs(selectionStartPoint.current.y - movedY),
@@ -1672,7 +1645,7 @@ const App: React.FC = () => {
       setSelectionBox(null); selectionStartPoint.current = null;
       window.removeEventListener('mousemove', handleWindowSelectionMove);
       window.removeEventListener('mouseup', handleWindowSelectionUp);
-  }, [activeTool, handleWindowSelectionMove, setNodeRenderOrder]);
+  }, [activeTool, handleWindowSelectionMove, setNodeRenderOrder, getWorldPosition]);
 
   const handleSvgMouseUp = (e: React.MouseEvent) => {
       const targetEl = e.target as Element;
@@ -1681,8 +1654,7 @@ const App: React.FC = () => {
             let x = e.clientX; let y = e.clientY;
             if (svgRef.current) {
                 const svgBounds = svgRef.current.getBoundingClientRect();
-                const currentTransform = d3.zoomTransform(svgRef.current);
-                const [worldX, worldY] = currentTransform.invert([e.clientX - svgBounds.left, e.clientY - svgBounds.top]);
+                const [worldX, worldY] = getWorldPosition(e.clientX - svgBounds.left, e.clientY - svgBounds.top);
                 x = worldX; y = worldY;
             }
             const id = `${NodeType.Comment}-${Date.now()}`;
@@ -1699,8 +1671,7 @@ const App: React.FC = () => {
     if (activeTool === 'select') {
         if (!svgRef.current) return;
         const svgBounds = svgRef.current.getBoundingClientRect();
-        const currentTransform = d3.zoomTransform(svgRef.current);
-        const [worldX, worldY] = currentTransform.invert([e.clientX - svgBounds.left, e.clientY - svgBounds.top]);
+        const [worldX, worldY] = getWorldPosition(e.clientX - svgBounds.left, e.clientY - svgBounds.top);
         selectionStartPoint.current = { x: worldX, y: worldY }; setSelectionBox({ x: worldX, y: worldY, width: 0, height: 0 });
         window.addEventListener('mousemove', handleWindowSelectionMove);
         window.addEventListener('mouseup', handleWindowSelectionUp);
@@ -1734,8 +1705,7 @@ const App: React.FC = () => {
       setPendingConnection({ fromNodeId, fromConnector });
       if (pendingConnectionPathRef.current && svgRef.current) {
         const svgBounds = svgRef.current.getBoundingClientRect();
-        const currentTransform = d3.zoomTransform(svgRef.current);
-        const [worldX, worldY] = currentTransform.invert([e.clientX - svgBounds.left, e.clientY - svgBounds.top]);
+        const [worldX, worldY] = getWorldPosition(e.clientX - svgBounds.left, e.clientY - svgBounds.top);
         const fromPoint = getConnectorPosition(fromNodeId, fromConnector.id, false);
         const toPoint = { x: worldX, y: worldY }; 
         const pathData = `M ${fromPoint.x} ${fromPoint.y} C ${fromPoint.x + 75} ${fromPoint.y}, ${toPoint.x - 75} ${toPoint.y}, ${toPoint.x} ${toPoint.y}`;
@@ -1870,8 +1840,7 @@ const App: React.FC = () => {
         let x = e.clientX; let y = e.clientY;
         if (svgRef.current) {
             const svgBounds = svgRef.current.getBoundingClientRect();
-            const currentTransform = d3.zoomTransform(svgRef.current);
-            const [worldX, worldY] = currentTransform.invert([e.clientX - svgBounds.left, e.clientY - svgBounds.top]);
+            const [worldX, worldY] = getWorldPosition(e.clientX - svgBounds.left, e.clientY - svgBounds.top);
             x = worldX; y = worldY;
         }
         const id = `${NodeType.ImageLoad}-${Date.now()}`;
@@ -1889,7 +1858,7 @@ const App: React.FC = () => {
             try {
                 const content = event.target?.result as string;
                 const project = JSON.parse(content) as Project;
-                if (project.id && project.state) { setNodes(project.state.nodes); setConnections(project.state.connections); setHistory(project.state.history); setPanZoom(project.state.panZoom); setNodeRenderOrder(project.state.nodeRenderOrder || Object.keys(project.state.nodes)); if (project.type === 'Playground') { setIsPlaygroundOpen(true); } }
+                if (project.id && project.state) { setNodes(project.state.nodes); setConnections(project.state.connections); setHistory(project.state.history); restoreTransform(project.state.panZoom); setNodeRenderOrder(project.state.nodeRenderOrder || Object.keys(project.state.nodes)); if (project.type === 'Playground') { setIsPlaygroundOpen(true); } }
             } catch (error) { console.error("Failed to parse dropped JSON project:", error); }
         };
         reader.readAsText(file); return;
@@ -1900,8 +1869,7 @@ const App: React.FC = () => {
     let x = e.clientX; let y = e.clientY;
     if (svgRef.current) {
         const svgBounds = svgRef.current.getBoundingClientRect();
-        const currentTransform = d3.zoomTransform(svgRef.current);
-        const [worldX, worldY] = currentTransform.invert([e.clientX - svgBounds.left, e.clientY - svgBounds.top]);
+        const [worldX, worldY] = getWorldPosition(e.clientX - svgBounds.left, e.clientY - svgBounds.top);
         x = worldX; y = worldY;
     }
 
@@ -1999,7 +1967,7 @@ const App: React.FC = () => {
       setNodes(project.state.nodes);
       setConnections(project.state.connections);
       setHistory(project.state.history);
-      setPanZoom(project.state.panZoom);
+      restoreTransform(project.state.panZoom);
       setNodeRenderOrder(project.state.nodeRenderOrder || Object.keys(project.state.nodes));
       setIsLoadModalOpen(false);
     }
@@ -2028,9 +1996,9 @@ const App: React.FC = () => {
       setNodes(project.state.nodes);
       setConnections(project.state.connections);
       setHistory(project.state.history);
-      setPanZoom(project.state.panZoom);
+      restoreTransform(project.state.panZoom);
       setNodeRenderOrder(project.state.nodeRenderOrder || Object.keys(project.state.nodes));
-      
+
       // Also add to projects list if it doesn't exist
       if (!projects.find(p => p.id === project.id)) {
           const updated = [...projects, project];
@@ -2161,7 +2129,12 @@ const App: React.FC = () => {
         
         <Toolbar onAddNode={addNode} isGenerating={isGeneratingAll} onOpenPlayground={() => setIsPlaygroundOpen(true)} />
         <ToolsPanel activeTool={activeTool} setActiveTool={setActiveTool} />
-        <ZoomControls zoomLevel={panZoom.k} onZoomIn={() => zoomBehaviorRef.current && d3.select(svgRef.current).transition().call(zoomBehaviorRef.current.scaleBy, 1.2)} onZoomOut={() => zoomBehaviorRef.current && d3.select(svgRef.current).transition().call(zoomBehaviorRef.current.scaleBy, 0.8)} onZoomToFit={() => { if (!zoomBehaviorRef.current || !svgRef.current || Object.keys(nodes).length === 0) return; const svg = d3.select(svgRef.current); const parent = svg.node()?.parentElement; if (!parent) return; const { width, height } = parent.getBoundingClientRect(); const visibleNodes = Object.values(nodes).filter((n: Node) => !n.hidden); if (visibleNodes.length === 0) return; const x0 = Math.min(...visibleNodes.map((n: Node) => n.position.x)); const x1 = Math.max(...visibleNodes.map((n: Node) => n.position.x + n.size.width)); const y0 = Math.min(...visibleNodes.map((n: Node) => n.position.y)); const y1 = Math.max(...visibleNodes.map((n: Node) => n.position.y + n.size.height)); const k = Math.min(3, 0.9 / Math.max((x1 - x0) / width, (y1 - y0) / height)); const x = (width - k * (x0 + x1)) / 2; const y = (height - k * (y0 + y1)) / 2; svg.transition().duration(750).call(zoomBehaviorRef.current.transform, d3.zoomIdentity.translate(x, y).scale(k)); }} />
+        <ZoomControls
+          zoomLevel={panZoom.k}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          onZoomToFit={() => zoomToFit(Object.values(nodes))}
+        />
         <button onClick={executeGraph} disabled={isGeneratingAll} className="absolute top-4 right-4 z-10 flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl shadow-2xl text-white font-bold transition-all duration-200 ease-in-out disabled:bg-gray-600 disabled:cursor-not-allowed"> {isGeneratingAll ? ( <> <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> <span>Generating...</span> </> ) : ( <> <PlayIcon className="w-6 h-6" /> <span>Generate All</span> </> )} </button>
         <ProjectControls onSave={() => setIsSaveModalOpen(true)} isSaveModalOpen={isSaveModalOpen} onCloseSaveModal={() => setIsSaveModalOpen(false)} onSaveProject={handleSaveProject} onLoad={() => setIsLoadModalOpen(true)} isLoadModalOpen={isLoadModalOpen} onCloseLoadModal={() => setIsLoadModalOpen(false)} projects={projects} onLoadProject={handleLoadProject} onDeleteProject={handleDeleteProject} onExportProject={handleExportProject} onImportProject={handleImportProject} isSaving={isSaving} onExportCurrentProject={() => setIsExportModalOpen(true)} isExportModalOpen={isExportModalOpen} onCloseExportModal={() => setIsExportModalOpen(false)} onConfirmExport={(name) => { const currentState: ProjectState = { nodes, connections, history: [], panZoom, nodeRenderOrder: nodeRenderOrderRef.current }; const projectToExport: Project = { id: `proj-exported-${Date.now()}`, name: name, createdAt: new Date().toISOString(), state: currentState }; const dataStr = JSON.stringify(projectToExport, null, 2); const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr); const exportFileDefaultName = `${name.replace(/\s/g, '_')}.json`; const linkElement = document.createElement('a'); linkElement.setAttribute('href', dataUri); linkElement.setAttribute('download', exportFileDefaultName); linkElement.click(); setIsExportModalOpen(false); }} onExportPlayground={() => { const currentState: ProjectState = { nodes, connections, history: [], panZoom, nodeRenderOrder: nodeRenderOrderRef.current }; const projectToExport = { ...{ id: `playground-${Date.now()}`, name: 'Playground Export', createdAt: new Date().toISOString(), state: currentState }, type: 'Playground' }; const dataStr = JSON.stringify(projectToExport, null, 2); const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr); const linkElement = document.createElement('a'); linkElement.setAttribute('href', dataUri); linkElement.setAttribute('download', 'playground_workflow.json'); linkElement.click(); }} />
         <PlaygroundModal isOpen={isPlaygroundOpen} onClose={() => setIsPlaygroundOpen(false)} nodes={nodes} onDataChange={updateNodeData} onRun={executeGraph} onGenerateSingle={onGenerateNode} isGenerating={isGeneratingAll} />

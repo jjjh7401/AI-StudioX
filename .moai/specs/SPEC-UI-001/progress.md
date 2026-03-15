@@ -1,0 +1,21 @@
+## SPEC-UI-001 Progress
+
+- Started: 2026-03-15T00:00:00
+- Phase 1 complete: 전략 분석 완료 (manager-strategy), TDD 접근법 확정
+- Phase 1.5 complete: 6개 마일스톤(M0~M5) 분해, 35개 태스크 식별
+- Phase 1.6 complete: 8개 인수기준 태스크 등록 (pending 상태)
+- Phase 1.7 complete: 12개 스텁 파일 생성 (hooks/, utils/, factories/, data/)
+- Phase 2 시작: M0 테스트 인프라 구축 → manager-tdd 위임
+- M0 complete: vitest 설치, canvasUtils.ts 구현, 22개 테스트 통과 (커버리지 100%)
+- M1 시작: useCanvas 훅 추출, graphUtils/dataFlowUtils 구현 → manager-tdd 위임
+- M1/M2/M3 순수 유틸리티 완료: graphUtils, dataFlowUtils, nodeFactory, nodeDefaults 구현
+- Phase 2.5: Quality Validation PASS — 227개 테스트 전체 통과, 커버리지 ~99%
+- 다음: App.tsx 리팩토링 (useCanvas, useNodes, useConnections 훅 추출)
+- App.tsx addNode 리팩토링: 30줄 switch문 → createNode 팩토리 통합 완료
+- Phase 2.5 재확인: 227개 테스트 통과, TypeScript 오류 0건
+- Phase 3 준비: Git 커밋 (순수 유틸리티 + 팩토리 + addNode 리팩토링)
+- M1 TDD 완료 (2026-03-15): useCanvas 훅 추출 완료
+  - hooks/useCanvas.ts: D3 zoom/pan 로직 완전 구현 (panZoom, zoomIn, zoomOut, zoomToFit, getWorldPosition, restoreTransform, isMiddleMousePanning)
+  - hooks/__tests__/useCanvas.test.ts: 15개 스펙 테스트 신규 작성 (panZoom 초기상태, restoreTransform, D3 zoom 초기화, zoomIn/Out, zoomToFit, getWorldPosition)
+  - App.tsx: useCanvas 훅 통합 완료 - 구 panZoom state/zoomBehaviorRef/isMiddleMousePanning/D3 zoom useEffect 제거, d3.zoomTransform 11개 호출 → getWorldPosition으로 교체, ZoomControls inline handlers 정리
+  - TypeScript 오류 0건, 전체 242개 테스트 통과 (기존 227 + 신규 15)
