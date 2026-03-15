@@ -54,6 +54,20 @@
     - isGeneratingAll (executeGraph 전용) 별도 유지
   - 구현 편차: executeNode 로직 완전 추출 대신 콜백 래핑 전략 (M4 노트 7번 수용)
   - TypeScript 오류 0건, 전체 309개 테스트 통과 (기존 296 + 신규 13)
+- M5 TDD 완료 (2026-03-15): useUndoRedo, useKeyboardShortcuts, useProjectManager 훅 구현 완료
+  - hooks/useUndoRedo.ts: useReducer 기반 히스토리 스택 구현 (past/future 배열, maxHistory 제한, clear)
+    - pushState, undo, redo, canUndo, canRedo, clear 인터페이스
+    - maxHistory 기본값 50, 초과 시 오래된 항목 자동 제거
+  - hooks/useKeyboardShortcuts.ts: 키보드 이벤트 리스너 등록/해제 훅
+    - B/Delete/Backspace/Ctrl+Z/Ctrl+D/Ctrl+A 단축키 처리
+    - input/textarea 포커스 시 단축키 무시, enabled 옵션 지원
+    - VoidCallback 타입으로 vi.fn() 호환성 확보
+  - hooks/useProjectManager.ts: IndexedDB 기반 프로젝트 관리 훅
+    - saveProject, loadProject, deleteProject, createNewProject, isLoading
+    - dbService.saveProjectsList/getProjectsList 추상화, 마운트 시 자동 로드
+  - 신규 테스트: useUndoRedo 15개, useKeyboardShortcuts 11개, useProjectManager 14개 (총 40개)
+  - TypeScript 오류 0건, 전체 349개 테스트 통과 (기존 309 + 신규 40)
+  - 구현 편차: App.tsx 통합 미완료 (훅 구현 및 테스트만 완료, 통합은 다음 단계)
 - M3 TDD 완료 (2026-03-15): useConnections 훅 추출 완료
   - hooks/useConnections.ts: 커넥션 생성/삭제/선택/로드 훅 완전 구현
     - startConnection, completeConnection, cancelConnection, deleteConnections, selectConnection, deleteConnectionsForNodes, loadConnections, updatePendingPath
