@@ -391,4 +391,155 @@ describe('useCanvas 훅', () => {
       expect(result.current.isMiddleMousePanning).toBe(false);
     });
   });
+
+  // -------------------------
+  // zoom filter 추가 브랜치 테스트
+  // -------------------------
+  describe('zoom filter 추가 브랜치', () => {
+    it('zoom filter: activeTool=pan 일 때 mousedown 이벤트가 허용되어야 한다', async () => {
+      const { useCanvas } = await import('../useCanvas');
+      const svgElement = createMockSvgElement();
+      const svgRef = createMockSvgRef(svgElement);
+      mockSelectionNode.mockReturnValue(svgElement);
+      const onPanZoomChange = vi.fn();
+
+      // activeTool='pan'으로 훅 초기화
+      renderHook(() =>
+        useCanvas({ svgRef, activeTool: 'pan', onPanZoomChange })
+      );
+
+      const filterCalls = mockFilter.mock.calls;
+      expect(filterCalls.length).toBeGreaterThan(0);
+      const filterFn = filterCalls[filterCalls.length - 1][0];
+
+      // pan 모드에서는 mousedown이 허용됨
+      const mousedownEvent = { type: 'mousedown', button: 0, target: document.createElement('div') };
+      expect(filterFn(mousedownEvent)).toBe(true);
+    });
+
+    it('zoom filter: activeTool=select + button===1(middle mouse) 이벤트는 허용되어야 한다', async () => {
+      const { useCanvas } = await import('../useCanvas');
+      const svgElement = createMockSvgElement();
+      const svgRef = createMockSvgRef(svgElement);
+      mockSelectionNode.mockReturnValue(svgElement);
+      const onPanZoomChange = vi.fn();
+
+      renderHook(() =>
+        useCanvas({ svgRef, activeTool: 'select', onPanZoomChange })
+      );
+
+      const filterCalls = mockFilter.mock.calls;
+      const filterFn = filterCalls[filterCalls.length - 1][0];
+
+      // select 모드에서 middle mouse(button=1) mousedown은 허용됨
+      const middleMouseEvent = { type: 'mousedown', button: 1, target: document.createElement('div') };
+      expect(filterFn(middleMouseEvent)).toBe(true);
+    });
+
+    it('zoom filter: activeTool=select + button===0(left mouse) mousedown은 차단되어야 한다', async () => {
+      const { useCanvas } = await import('../useCanvas');
+      const svgElement = createMockSvgElement();
+      const svgRef = createMockSvgRef(svgElement);
+      mockSelectionNode.mockReturnValue(svgElement);
+      const onPanZoomChange = vi.fn();
+
+      renderHook(() =>
+        useCanvas({ svgRef, activeTool: 'select', onPanZoomChange })
+      );
+
+      const filterCalls = mockFilter.mock.calls;
+      const filterFn = filterCalls[filterCalls.length - 1][0];
+
+      // select 모드에서 left mouse mousedown은 차단됨
+      const leftMouseEvent = { type: 'mousedown', button: 0, target: document.createElement('div') };
+      expect(filterFn(leftMouseEvent)).toBe(false);
+    });
+  });
+
+  // -------------------------
+  // zoomToFit 노드 있을 때 테스트
+  // -------------------------
+  describe('zoomToFit 노드 있을 때', () => {
+    it('zoomToFit: 가시적인 노드가 있어도 parentElement가 없으면 아무것도 하지 않아야 한다', async () => {
+      // jsdom 환경에서는 SVGElement.parentElement가 null이기 때문에
+      // zoomToFit 내부에서 return하게 됨 (D3 svgNode().parentElement가 null)
+      const { useCanvas } = await import('../useCanvas');
+      const svgElement = createMockSvgElement();
+      const svgRef = createMockSvgRef(svgElement);
+      mockSelectionNode.mockReturnValue(svgElement);
+      const onPanZoomChange = vi.fn();
+
+      const { result } = renderHook(() =>
+        useCanvas({ svgRef, activeTool: 'select', onPanZoomChange })
+      );
+
+      mockTransition.mockClear();
+
+      const visibleNodes = [
+        {
+          hidden: false,
+          position: { x: 100, y: 100 },
+          size: { width: 200, height: 150 },
+        },
+      ];
+
+      // jsdom에서 parentElement가 null이므로 transition은 호출되지 않음
+      act(() => {
+        result.current.zoomToFit(visibleNodes as any);
+      });
+
+      // 테스트 환경의 제약으로 실제 D3 transition 호출을 검증하기 어려움
+      // zoomToFit 함수가 에러 없이 실행되는 것을 검증함
+      expect(() => result.current.zoomToFit(visibleNodes as any)).not.toThrow();
+    });
+  });
+
+  // -------------------------
+  // restoreTransform svgRef 있을 때 D3 transform 적용 테스트
+  // -------------------------
+  describe('restoreTransform svgRef 있을 때', () => {
+    it('svgRef.current와 zoomBehaviorRef가 있을 때 restoreTransform은 D3 transform을 호출해야 한다', async () => {
+      // restoreTransform은 zoomBehaviorRef.current와 svgRef.current가 모두 있을 때
+      // D3 zoom transform을 적용하고 on('zoom') 콜백으로 상태가 업데이트됨
+      // jsdom에서는 on('zoom') 콜백이 실제로 실행되지 않으므로
+      // D3 selection.call이 호출되었는지 검증함
+      const { useCanvas } = await import('../useCanvas');
+      const svgElement = createMockSvgElement();
+      const svgRef = createMockSvgRef(svgElement);
+      mockSelectionNode.mockReturnValue(svgElement);
+      const onPanZoomChange = vi.fn();
+
+      const { result } = renderHook(() =>
+        useCanvas({ svgRef, activeTool: 'select', onPanZoomChange })
+      );
+
+      // 초기화 시 호출된 것들 초기화
+      mockSelectionCall.mockClear();
+
+      act(() => {
+        result.current.restoreTransform({ x: 100, y: 50, k: 1.5 });
+      });
+
+      // D3 selection.call이 zoomBehavior.transform과 함께 호출되어야 함
+      expect(mockSelectionCall).toHaveBeenCalled();
+    });
+
+    it('svgRef.current가 없을 때 restoreTransform은 panZoom 상태만 업데이트해야 한다', async () => {
+      const { useCanvas } = await import('../useCanvas');
+      // svgRef.current = null 인 경우
+      const svgRef = createMockSvgRef(null);
+      const onPanZoomChange = vi.fn();
+
+      const { result } = renderHook(() =>
+        useCanvas({ svgRef, activeTool: 'select', onPanZoomChange })
+      );
+
+      act(() => {
+        result.current.restoreTransform({ x: 100, y: 50, k: 1.5 });
+      });
+
+      // svgRef.current가 null이면 panZoom 상태가 직접 업데이트됨
+      expect(result.current.panZoom).toEqual({ x: 100, y: 50, k: 1.5 });
+    });
+  });
 });

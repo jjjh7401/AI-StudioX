@@ -270,6 +270,91 @@ describe('useProjectManager 훅', () => {
   });
 
   // ========================
+  // Cycle 4 (추가): deleteProject catch 블록 및 currentProjectId 처리
+  // ========================
+  describe('Cycle 4 (추가): deleteProject 예외 케이스', () => {
+    it('현재 로드된 프로젝트를 삭제할 때 currentProjectId가 undefined가 되어야 한다', async () => {
+      const savedProjects = [createMockProject('proj-1', '프로젝트1')];
+      mockGetProjectsList.mockResolvedValue(savedProjects);
+
+      const { useProjectManager } = await import('../useProjectManager');
+      const { result } = renderHook(() =>
+        useProjectManager({ getState, onStateLoaded })
+      );
+
+      await waitFor(() => expect(result.current.projects).toHaveLength(1));
+
+      // proj-1 로드
+      act(() => { result.current.loadProject('proj-1'); });
+      expect(result.current.currentProjectId).toBe('proj-1');
+
+      // 현재 로드된 proj-1 삭제
+      await act(async () => {
+        await result.current.deleteProject('proj-1');
+      });
+
+      expect(result.current.currentProjectId).toBeUndefined();
+    });
+
+    it('saveProject에서 saveProjectsList가 throw할 때 에러가 로그되어야 한다', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockSaveProjectsList.mockRejectedValueOnce(new Error('저장 실패'));
+
+      const { useProjectManager } = await import('../useProjectManager');
+      const { result } = renderHook(() =>
+        useProjectManager({ getState, onStateLoaded })
+      );
+
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+      await act(async () => {
+        await result.current.saveProject('테스트 프로젝트');
+      });
+
+      expect(consoleErrorSpy).toHaveBeenCalled();
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('deleteProject에서 saveProjectsList가 throw할 때 에러가 로그되어야 한다', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const savedProjects = [createMockProject('proj-1', '프로젝트1')];
+      mockGetProjectsList.mockResolvedValue(savedProjects);
+      mockSaveProjectsList.mockRejectedValueOnce(new Error('삭제 실패'));
+
+      const { useProjectManager } = await import('../useProjectManager');
+      const { result } = renderHook(() =>
+        useProjectManager({ getState, onStateLoaded })
+      );
+
+      await waitFor(() => expect(result.current.projects).toHaveLength(1));
+
+      await act(async () => {
+        await result.current.deleteProject('proj-1');
+      });
+
+      expect(consoleErrorSpy).toHaveBeenCalled();
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('getProjectsList가 throw할 때 에러가 로그되고 isLoading이 false가 되어야 한다', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockGetProjectsList.mockRejectedValueOnce(new Error('로드 실패'));
+
+      const { useProjectManager } = await import('../useProjectManager');
+      const { result } = renderHook(() =>
+        useProjectManager({ getState, onStateLoaded })
+      );
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      expect(consoleErrorSpy).toHaveBeenCalled();
+      consoleErrorSpy.mockRestore();
+    });
+  });
+
+  // ========================
   // Cycle 5: createNewProject
   // ========================
   describe('Cycle 5: createNewProject', () => {

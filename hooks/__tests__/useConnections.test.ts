@@ -472,6 +472,57 @@ describe('useConnections 훅', () => {
   });
 
   // ========================
+  // Cycle 5 (추가): completeConnection 예외 케이스
+  // ========================
+  describe('Cycle 5 (추가): completeConnection 예외 케이스', () => {
+    it('pendingConnection이 없을 때 completeConnection 호출 시 커넥션이 추가되지 않아야 한다', async () => {
+      const { useConnections } = await import('../useConnections');
+      const outA = makeConnector('out-A', ConnectorType.Text);
+      const inB = makeConnector('in-B', ConnectorType.Text);
+      const nodeA = makeNode('A', NodeType.Text, [], [outA]);
+      const nodeB = makeNode('B', NodeType.Image, [inB], []);
+      const nodes = { A: nodeA, B: nodeB };
+      const { result } = renderHook(() =>
+        useConnections({ nodes, getWorldPosition: createMockGetWorldPosition() })
+      );
+
+      // startConnection 없이 바로 completeConnection 호출
+      act(() => {
+        result.current.completeConnection('B', inB);
+      });
+
+      expect(result.current.connections).toHaveLength(0);
+    });
+
+    it('deleteConnections에 빈 배열 전달 시 커넥션이 유지되어야 한다', async () => {
+      const { useConnections } = await import('../useConnections');
+      const outA = makeConnector('out-A', ConnectorType.Text);
+      const inB = makeConnector('in-B', ConnectorType.Text);
+      const nodeA = makeNode('A', NodeType.Text, [], [outA]);
+      const nodeB = makeNode('B', NodeType.Image, [inB], []);
+      const nodes = { A: nodeA, B: nodeB };
+      const { result } = renderHook(() =>
+        useConnections({ nodes, getWorldPosition: createMockGetWorldPosition() })
+      );
+
+      // 커넥션 추가
+      act(() => {
+        result.current.startConnection('A', outA, 10, 20);
+        result.current.completeConnection('B', inB);
+      });
+      expect(result.current.connections).toHaveLength(1);
+
+      // 빈 배열로 deleteConnections 호출
+      act(() => {
+        result.current.deleteConnections([]);
+      });
+
+      // 커넥션이 유지되어야 함
+      expect(result.current.connections).toHaveLength(1);
+    });
+  });
+
+  // ========================
   // Cycle 6: onConnectionsChanged 콜백
   // ========================
   describe('Cycle 6: onConnectionsChanged 콜백', () => {

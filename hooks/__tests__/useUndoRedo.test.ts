@@ -140,6 +140,67 @@ describe('useUndoRedo 훅', () => {
   });
 
   // ========================
+  // Cycle 3 (추가): 여러 번 undo 및 redo 사이클
+  // ========================
+  describe('Cycle 3 (추가): 여러 번 undo 및 redo 사이클', () => {
+    it('여러 번 undo 시 future 스택에 상태가 누적되어야 한다', async () => {
+      const { useUndoRedo } = await import('../useUndoRedo');
+      const { result } = renderHook(() => useUndoRedo<string>());
+
+      act(() => {
+        result.current.pushState('state-A');
+        result.current.pushState('state-B');
+        result.current.pushState('state-C');
+      });
+
+      // 첫 번째 undo: state-C
+      let ret1: string | undefined;
+      act(() => { ret1 = result.current.undo(); });
+      expect(ret1).toBe('state-C');
+      expect(result.current.canRedo).toBe(true);
+
+      // 두 번째 undo: state-B
+      let ret2: string | undefined;
+      act(() => { ret2 = result.current.undo(); });
+      expect(ret2).toBe('state-B');
+      expect(result.current.canRedo).toBe(true);
+
+      // 세 번째 undo: state-A
+      let ret3: string | undefined;
+      act(() => { ret3 = result.current.undo(); });
+      expect(ret3).toBe('state-A');
+      expect(result.current.canUndo).toBe(false);
+      expect(result.current.canRedo).toBe(true);
+    });
+
+    it('undo 후 redo 전체 사이클: 상태가 올바르게 복원되어야 한다', async () => {
+      const { useUndoRedo } = await import('../useUndoRedo');
+      const { result } = renderHook(() => useUndoRedo<string>());
+
+      act(() => {
+        result.current.pushState('state-A');
+        result.current.pushState('state-B');
+      });
+
+      // undo → undo → redo → redo
+      act(() => { result.current.undo(); }); // state-B 꺼냄
+      act(() => { result.current.undo(); }); // state-A 꺼냄
+      expect(result.current.canUndo).toBe(false);
+      expect(result.current.canRedo).toBe(true);
+
+      let r1: string | undefined;
+      act(() => { r1 = result.current.redo(); }); // state-A 복원
+      expect(r1).toBe('state-A');
+      expect(result.current.canRedo).toBe(true);
+
+      let r2: string | undefined;
+      act(() => { r2 = result.current.redo(); }); // state-B 복원
+      expect(r2).toBe('state-B');
+      expect(result.current.canRedo).toBe(false);
+    });
+  });
+
+  // ========================
   // Cycle 4: maxHistory 제한
   // ========================
   describe('Cycle 4: maxHistory 제한', () => {

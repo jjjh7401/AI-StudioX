@@ -689,6 +689,279 @@ describe('useNodes 훅', () => {
   });
 
   // ========================
+  // Cycle 3 (추가): Group 노드 이동 시 자식 노드 함께 이동
+  // ========================
+  describe('Cycle 3 (추가): Group 노드 이동', () => {
+    it('Group 노드 이동 시 그룹 경계 내부의 자식 노드도 함께 이동되어야 한다', async () => {
+      const { useNodes } = await import('../useNodes');
+      const getWorldPosition = createMockGetWorldPosition(500, 400);
+      const { result } = renderHook(() =>
+        useNodes({ getWorldPosition, panZoom: DEFAULT_PAN_ZOOM })
+      );
+
+      // Group 노드와 자식 노드 한 번에 추가
+      act(() => {
+        result.current.addNode(NodeType.Group);
+        result.current.addNode(NodeType.Text);
+      });
+
+      const groupId = Object.keys(result.current.nodes).find(
+        id => result.current.nodes[id].type === NodeType.Group
+      )!;
+      const childId = Object.keys(result.current.nodes).find(
+        id => result.current.nodes[id].type === NodeType.Text
+      )!;
+
+      // 한 번에 위치/크기 설정
+      act(() => {
+        result.current.setNodes((draft) => {
+          draft[groupId].position = { x: 0, y: 0 };
+          draft[groupId].size = { width: 1000, height: 1000 };
+          draft[groupId].isCollapsed = false;
+          draft[childId].position = { x: 10, y: 10 };
+          draft[childId].size = { width: 50, height: 50 };
+          draft[childId].hidden = false;
+        });
+      });
+
+      const childPosBefore = { ...result.current.nodes[childId].position };
+
+      // Group 노드 선택 후 이동
+      act(() => {
+        result.current.selectNode(groupId);
+      });
+      act(() => {
+        result.current.moveNodes(groupId, 20, 30);
+      });
+
+      // 자식 노드도 동일한 delta만큼 이동되어야 함
+      expect(result.current.nodes[childId].position.x).toBe(childPosBefore.x + 20);
+      expect(result.current.nodes[childId].position.y).toBe(childPosBefore.y + 30);
+    });
+  });
+
+  // ========================
+  // Cycle 2 (추가): Group 노드 toggleCollapse expand 방향
+  // ========================
+  describe('Cycle 2 (추가): Group 노드 toggleCollapse expand', () => {
+    it('Group 노드 isCollapsed=true → toggleCollapse 호출 시 자식 노드가 unhide되어야 한다', async () => {
+      const { useNodes } = await import('../useNodes');
+      const getWorldPosition = createMockGetWorldPosition(500, 400);
+      const { result } = renderHook(() =>
+        useNodes({ getWorldPosition, panZoom: DEFAULT_PAN_ZOOM })
+      );
+
+      // Group 노드 추가 후 자식 노드 추가를 한 번에 처리
+      act(() => {
+        result.current.addNode(NodeType.Group);
+        result.current.addNode(NodeType.Text);
+      });
+
+      const groupId = Object.keys(result.current.nodes).find(
+        id => result.current.nodes[id].type === NodeType.Group
+      )!;
+      const childId = Object.keys(result.current.nodes).find(
+        id => result.current.nodes[id].type === NodeType.Text
+      )!;
+
+      // Group을 (0,0) 크기 (1000,1000)으로, 자식을 그룹 내부로 설정
+      act(() => {
+        result.current.setNodes((draft) => {
+          draft[groupId].position = { x: 0, y: 0 };
+          draft[groupId].size = { width: 1000, height: 1000 };
+          draft[childId].position = { x: 10, y: 10 };
+          draft[childId].size = { width: 50, height: 50 };
+          draft[childId].hidden = false;
+        });
+      });
+
+      // collapse (자식 노드 hidden=true)
+      act(() => {
+        result.current.toggleCollapse(groupId);
+      });
+      expect(result.current.nodes[childId].hidden).toBe(true);
+
+      // expand (자식 노드 hidden=false)
+      act(() => {
+        result.current.toggleCollapse(groupId);
+      });
+      expect(result.current.nodes[childId].hidden).toBe(false);
+    });
+
+    it('Group 노드 expand 시 isCollapsed가 false가 되어야 한다', async () => {
+      const { useNodes } = await import('../useNodes');
+      const getWorldPosition = createMockGetWorldPosition(500, 400);
+      const { result } = renderHook(() =>
+        useNodes({ getWorldPosition, panZoom: DEFAULT_PAN_ZOOM })
+      );
+
+      act(() => {
+        result.current.addNode(NodeType.Group);
+      });
+      const groupId = Object.keys(result.current.nodes).find(
+        id => result.current.nodes[id].type === NodeType.Group
+      )!;
+
+      // collapse 후 expand
+      act(() => { result.current.toggleCollapse(groupId); });
+      expect(result.current.nodes[groupId].isCollapsed).toBe(true);
+
+      act(() => { result.current.toggleCollapse(groupId); });
+      expect(result.current.nodes[groupId].isCollapsed).toBe(false);
+    });
+  });
+
+  // ========================
+  // Cycle 2 (추가): Group 노드 toggleBypass
+  // ========================
+  describe('Cycle 2 (추가): Group 노드 toggleBypass', () => {
+    it('Group 노드 bypass 시 그룹 경계 내부 자식 노드도 bypass되어야 한다', async () => {
+      const { useNodes } = await import('../useNodes');
+      const getWorldPosition = createMockGetWorldPosition(500, 400);
+      const { result } = renderHook(() =>
+        useNodes({ getWorldPosition, panZoom: DEFAULT_PAN_ZOOM })
+      );
+
+      // Group 노드와 자식 노드를 한 번에 추가
+      act(() => {
+        result.current.addNode(NodeType.Group);
+        result.current.addNode(NodeType.Text);
+      });
+
+      const groupId = Object.keys(result.current.nodes).find(
+        id => result.current.nodes[id].type === NodeType.Group
+      )!;
+      const childId = Object.keys(result.current.nodes).find(
+        id => result.current.nodes[id].type === NodeType.Text
+      )!;
+
+      // 한 번에 위치 설정
+      act(() => {
+        result.current.setNodes((draft) => {
+          draft[groupId].position = { x: 0, y: 0 };
+          draft[groupId].size = { width: 1000, height: 1000 };
+          draft[childId].position = { x: 10, y: 10 };
+          draft[childId].size = { width: 50, height: 50 };
+        });
+      });
+
+      // Group bypass 활성화
+      act(() => {
+        result.current.toggleBypass(groupId);
+      });
+
+      expect(result.current.nodes[groupId].isBypassed).toBe(true);
+      expect(result.current.nodes[childId].isBypassed).toBe(true);
+    });
+
+    it('Group 노드 bypass 해제 시 자식 노드도 bypass 해제되어야 한다', async () => {
+      const { useNodes } = await import('../useNodes');
+      const getWorldPosition = createMockGetWorldPosition(500, 400);
+      const { result } = renderHook(() =>
+        useNodes({ getWorldPosition, panZoom: DEFAULT_PAN_ZOOM })
+      );
+
+      act(() => {
+        result.current.addNode(NodeType.Group);
+        result.current.addNode(NodeType.Text);
+      });
+
+      const groupId = Object.keys(result.current.nodes).find(
+        id => result.current.nodes[id].type === NodeType.Group
+      )!;
+      const childId = Object.keys(result.current.nodes).find(
+        id => result.current.nodes[id].type === NodeType.Text
+      )!;
+
+      act(() => {
+        result.current.setNodes((draft) => {
+          draft[groupId].position = { x: 0, y: 0 };
+          draft[groupId].size = { width: 1000, height: 1000 };
+          draft[childId].position = { x: 10, y: 10 };
+          draft[childId].size = { width: 50, height: 50 };
+        });
+      });
+
+      // bypass 활성화 후 해제
+      act(() => { result.current.toggleBypass(groupId); });
+      act(() => { result.current.toggleBypass(groupId); });
+
+      expect(result.current.nodes[groupId].isBypassed).toBe(false);
+      expect(result.current.nodes[childId].isBypassed).toBe(false);
+    });
+  });
+
+  // ========================
+  // Cycle 4 (추가): selectNode Group 재정렬 및 Storyboard/Script 위치 오프셋
+  // ========================
+  describe('Cycle 4 (추가): selectNode Group 재정렬', () => {
+    it('Group 노드 선택 시 nodeRenderOrder에서 그룹은 일반 노드보다 앞에 위치해야 한다', async () => {
+      const { useNodes } = await import('../useNodes');
+      const getWorldPosition = createMockGetWorldPosition(500, 400);
+      const { result } = renderHook(() =>
+        useNodes({ getWorldPosition, panZoom: DEFAULT_PAN_ZOOM })
+      );
+
+      // 일반 노드와 Group 노드 추가
+      act(() => { result.current.addNode(NodeType.Text); });
+      act(() => { result.current.addNode(NodeType.Group); });
+
+      const textId = Object.keys(result.current.nodes).find(
+        id => result.current.nodes[id].type === NodeType.Text
+      )!;
+      const groupId = Object.keys(result.current.nodes).find(
+        id => result.current.nodes[id].type === NodeType.Group
+      )!;
+
+      // Group 노드 선택
+      act(() => { result.current.selectNode(groupId); });
+
+      const order = result.current.nodeRenderOrder;
+      const groupIdx = order.indexOf(groupId);
+      const textIdx = order.indexOf(textId);
+
+      // 그룹 노드는 일반 노드보다 앞에 위치
+      expect(groupIdx).toBeLessThan(textIdx);
+    });
+  });
+
+  describe('Cycle 1 (추가): addNode Storyboard/Script 위치 오프셋', () => {
+    it('Storyboard 타입 addNode 시 위치가 특수 오프셋으로 설정되어야 한다', async () => {
+      const { useNodes } = await import('../useNodes');
+      const getWorldPosition = createMockGetWorldPosition(500, 400);
+      const { result } = renderHook(() =>
+        useNodes({ getWorldPosition, panZoom: DEFAULT_PAN_ZOOM })
+      );
+
+      act(() => {
+        result.current.addNode(NodeType.Storyboard);
+      });
+
+      const node = Object.values(result.current.nodes)[0];
+      // Storyboard 오프셋: x = worldX - 375, y = worldY - 550
+      expect(node.position.x).toBe(500 - 375);
+      expect(node.position.y).toBe(400 - 550);
+    });
+
+    it('Script 타입 addNode 시 위치가 특수 오프셋으로 설정되어야 한다', async () => {
+      const { useNodes } = await import('../useNodes');
+      const getWorldPosition = createMockGetWorldPosition(500, 400);
+      const { result } = renderHook(() =>
+        useNodes({ getWorldPosition, panZoom: DEFAULT_PAN_ZOOM })
+      );
+
+      act(() => {
+        result.current.addNode(NodeType.Script);
+      });
+
+      const node = Object.values(result.current.nodes)[0];
+      // Script 오프셋: x = worldX - 400, y = worldY - 450
+      expect(node.position.x).toBe(500 - 400);
+      expect(node.position.y).toBe(400 - 450);
+    });
+  });
+
+  // ========================
   // Cycle 5: 유틸리티 (loadNodes, setNodes)
   // ========================
   describe('Cycle 5: 유틸리티', () => {

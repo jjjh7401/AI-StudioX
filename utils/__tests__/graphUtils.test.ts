@@ -224,6 +224,18 @@ describe('getDirectDownstream', () => {
   });
 });
 
+describe('hasCycle - 자기 루프', () => {
+  it('fromNodeId === toNodeId(자기 루프)인 경우 순환을 감지해야 한다', () => {
+    // A→A 자기 참조: 길이 1 사이클
+    expect(hasCycle([], 'A', 'A')).toBe(true);
+  });
+
+  it('기존 커넥션이 있어도 자기 루프는 항상 감지해야 한다', () => {
+    const connections: Connection[] = [makeConn('c1', 'A', 'B')];
+    expect(hasCycle(connections, 'B', 'B')).toBe(true);
+  });
+});
+
 describe('isValidConnection', () => {
   it('정상적인 새 커넥션은 valid여야 한다', () => {
     const result = isValidConnection('A', 'out', 'B', 'in', []);

@@ -180,6 +180,65 @@ describe('useKeyboardShortcuts 훅', () => {
   });
 
   // ========================
+  // Cycle 6 (추가): contenteditable 및 비입력 요소 포커스 시 단축키 동작
+  // ========================
+  describe('Cycle 6 (추가): contenteditable 포커스 시 동작', () => {
+    it('contenteditable 요소에 포커스 시 Delete 키가 호출되어야 한다 (INPUT/TEXTAREA가 아니므로)', async () => {
+      const { useKeyboardShortcuts } = await import('../useKeyboardShortcuts');
+      renderHook(() =>
+        useKeyboardShortcuts({ onDelete, onDuplicate, onUndo, onBypass, onSelectAll })
+      );
+
+      // contenteditable div는 INPUT/TEXTAREA가 아니므로 isTypingInInput이 false
+      const div = document.createElement('div');
+      div.setAttribute('contenteditable', 'true');
+      document.body.appendChild(div);
+      div.focus();
+
+      // contenteditable은 INPUT/TEXTAREA가 아니므로 단축키 차단되지 않음
+      // (단, 실제 훅 구현이 tagName으로만 체크하면 호출됨)
+      fireKeyDown('Delete');
+      // isTypingInInput은 INPUT/TEXTAREA만 체크하므로 onDelete는 호출되어야 함
+      expect(vi.mocked(onDelete)).toHaveBeenCalled();
+
+      document.body.removeChild(div);
+    });
+
+    it('일반 div에 포커스 시 Ctrl+Z는 onUndo를 호출해야 한다', async () => {
+      const { useKeyboardShortcuts } = await import('../useKeyboardShortcuts');
+      renderHook(() =>
+        useKeyboardShortcuts({ onDelete, onDuplicate, onUndo, onBypass, onSelectAll })
+      );
+
+      const div = document.createElement('div');
+      div.setAttribute('tabindex', '0');
+      document.body.appendChild(div);
+      div.focus();
+
+      fireKeyDown('z', { ctrlKey: true });
+      expect(vi.mocked(onUndo)).toHaveBeenCalledTimes(1);
+
+      document.body.removeChild(div);
+    });
+
+    it('Input 요소에 포커스된 경우 Delete 키 입력 시 onDelete가 호출되지 않아야 한다', async () => {
+      const { useKeyboardShortcuts } = await import('../useKeyboardShortcuts');
+      renderHook(() =>
+        useKeyboardShortcuts({ onDelete, onDuplicate, onUndo, onBypass, onSelectAll })
+      );
+
+      const input = document.createElement('input');
+      document.body.appendChild(input);
+      input.focus();
+
+      fireKeyDown('Delete');
+      expect(vi.mocked(onDelete)).not.toHaveBeenCalled();
+
+      document.body.removeChild(input);
+    });
+  });
+
+  // ========================
   // Cycle 7: 언마운트 시 이벤트 리스너 제거
   // ========================
   describe('Cycle 7: 언마운트 시 정리', () => {
