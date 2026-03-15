@@ -59,7 +59,7 @@ import { COMPOSITE_NODE_HEADER_HEIGHT, COMPOSITE_NODE_CONTENT_PADDING_X, COMPOSI
 import { SYSTEM_PROMPTS } from './data/systemPrompts';
 import ZoomControls from './components/ZoomControls';
 import ProjectControls from './components/ProjectControls';
-import { storeAsset, getAsset, dataURLToBlob, saveProjectsList, getProjectsList } from './services/dbService';
+import { storeAsset, getAsset, dataURLToBlob, saveProjectsList } from './services/dbService';
 import { CATEGORY_STYLES } from './data/scriptStyles';
 import PlaygroundModal from './components/PlaygroundModal'; // Import Playground Modal
 import { createNode } from './factories/nodeFactory';
@@ -67,6 +67,9 @@ import { useCanvas } from './hooks/useCanvas';
 import { useNodes } from './hooks/useNodes';
 import { useConnections } from './hooks/useConnections';
 import { useNodeGeneration } from './hooks/useNodeGeneration';
+import { useUndoRedo } from './hooks/useUndoRedo';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useProjectManager } from './hooks/useProjectManager';
 
 interface DraggableNodeWrapperProps {
   node: Node;
@@ -251,7 +254,25 @@ const App: React.FC = () => {
     selectedNodeIdsRef.current = ids;
   }, [setSelectedNodeIdsInHook]);
   
-  const [projects, setProjects] = useImmer<Project[]>([]);
+  // useUndoRedo: 노드/커넥션 상태 스냅샷 기반 Undo/Redo (SPEC-UI-001 M5)
+  const undoPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { pushState: pushUndoState, undo: undoState } = useUndoRedo<{
+    nodes: Record<string, Node>;
+    connections: Connection[];
+    nodeRenderOrder: string[];
+  }>();
+
+  // useProjectManager: IndexedDB 기반 프로젝트 저장/로드/삭제 (SPEC-UI-001 M5)
+  const { projects, saveProject: pmSaveProject, loadProject: pmLoadProject, deleteProject: pmDeleteProject } = useProjectManager({
+    getState: () => ({ nodes, connections, history, panZoom, nodeRenderOrder }),
+    onStateLoaded: (state) => {
+      loadNodes(state.nodes, state.nodeRenderOrder || Object.keys(state.nodes));
+      loadConnections(state.connections);
+      setHistory(state.history);
+      restoreTransform(state.panZoom);
+    },
+  });
+
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -290,45 +311,14 @@ const App: React.FC = () => {
       selectedNodeIdsRef.current = selectedNodeIds;
   }, [selectedNodeIds]);
 
-  const saveProjectsToStorage = useCallback(async (updatedProjects: Project[]) => {
-      try {
-          await saveProjectsList(updatedProjects);
-      } catch (error) {
-          console.error("Failed to save projects to IndexedDB:", error);
-          alert("프로젝트 저장에 실패했습니다.");
-      }
-  }, []);
-
+  // 노드/커넥션 변경 시 undo 히스토리에 스냅샷 저장 (300ms 디바운스, SPEC-UI-001 M5)
   useEffect(() => {
-    const loadInitialData = async () => {
-        try {
-            const savedProjects = await getProjectsList();
-
-            if (savedProjects && savedProjects.length > 0) {
-                setProjects(savedProjects);
-            }
-            else {
-                const defaultProject: Project = {
-                    id: `proj-initial-state`,
-                    name: 'New',
-                    createdAt: new Date().toISOString(),
-                    state: {
-                        nodes: {},
-                        connections: [],
-                        history: [],
-                        panZoom: { x: 0, y: 0, k: 1 },
-                        nodeRenderOrder: [],
-                    },
-                };
-                setProjects([defaultProject]);
-                await saveProjectsToStorage([defaultProject]);
-            }
-        } catch (error) {
-            console.error("Failed to load or initialize projects from IndexedDB:", error);
-        }
-    };
-    loadInitialData();
-  }, [setProjects, saveProjectsToStorage]);
+    if (undoPushTimerRef.current) clearTimeout(undoPushTimerRef.current);
+    undoPushTimerRef.current = setTimeout(() => {
+      pushUndoState({ nodes, connections, nodeRenderOrder });
+    }, 300);
+    return () => { if (undoPushTimerRef.current) clearTimeout(undoPushTimerRef.current); };
+  }, [nodes, connections, nodeRenderOrder, pushUndoState]);
 
   const getConnectorPosition = useCallback((nodeId: string, connectorId: string, isInput: boolean): Point => {
     const node = nodes[nodeId];
@@ -1429,44 +1419,62 @@ const App: React.FC = () => {
       if (selectNewNodes) { setSelectedNodeIds(newNodes.map(n => n.id)); }
   }, [setNodes, loadConnections, connections, setNodeRenderOrder]);
 
+  // useKeyboardShortcuts: Delete/Bypass/Duplicate/Undo/SelectAll 단축키 (SPEC-UI-001 M5)
+  useKeyboardShortcuts({
+    onDelete: () => {
+      if (selectedConnectionId) { deleteConnections([selectedConnectionId]); selectConnection(undefined); }
+      if (selectedNodeIds.length > 0) {
+        setNodes(draft => { selectedNodeIds.forEach(id => { delete draft[id]; }); });
+        deleteConnectionsForNodes(selectedNodeIds);
+        setNodeRenderOrder(draft => draft.filter(id => !selectedNodeIds.includes(id)));
+        setSelectedNodeIds([]);
+      }
+    },
+    onBypass: () => {
+      if (selectedNodeIds.length > 0) { selectedNodeIds.forEach(id => handleToggleBypass(id)); }
+    },
+    onDuplicate: () => {
+      if (selectedNodeIds.length > 0) {
+        const nodesToCopy = selectedNodeIds.map(id => nodes[id]).filter(Boolean);
+        const connectionsToCopy = connections.filter(c => selectedNodeIds.includes(c.fromNodeId) && selectedNodeIds.includes(c.toNodeId));
+        if (nodesToCopy.length > 0) { duplicateNodes(nodesToCopy, connectionsToCopy, { x: 50, y: 50 }, true); }
+      }
+    },
+    onUndo: () => {
+      const prev = undoState();
+      if (prev) { loadNodes(prev.nodes, prev.nodeRenderOrder); loadConnections(prev.connections); }
+    },
+    onSelectAll: () => { setSelectedNodeIds(Object.keys(nodes)); },
+  });
+
+  // 나머지 단축키 (Ctrl+C/V/S/N, V/H/C 도구 전환) — useKeyboardShortcuts에 포함되지 않는 단축키
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) { return; }
       const isCtrlOrMeta = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
-      if ((event.key === 'Delete' || event.key === 'Backspace') && (selectedConnectionId || selectedNodeIds.length > 0)) {
-        if (selectedConnectionId) { deleteConnections([selectedConnectionId]); selectConnection(undefined); }
-        if (selectedNodeIds.length > 0) {
-            setNodes(draft => { selectedNodeIds.forEach(id => { delete draft[id]; }); });
-            deleteConnectionsForNodes(selectedNodeIds);
-            setNodeRenderOrder(draft => draft.filter(id => !selectedNodeIds.includes(id)));
-            setSelectedNodeIds([]);
-        }
-      } else if (isCtrlOrMeta && key === 'b') {
-          event.preventDefault();
-          if (selectedNodeIds.length > 0) { selectedNodeIds.forEach(id => handleToggleBypass(id)); }
-      } else if (isCtrlOrMeta && key === 'c') {
-         const nodesToCopy = selectedNodeIds.map(id => nodes[id]).filter(Boolean);
-         const connectionsToCopy = connections.filter(c => selectedNodeIds.includes(c.fromNodeId) && selectedNodeIds.includes(c.toNodeId));
-         if (nodesToCopy.length > 0) { clipboardRef.current = { nodes: nodesToCopy, connections: connectionsToCopy }; }
+      if (isCtrlOrMeta && key === 'c') {
+        const nodesToCopy = selectedNodeIds.map(id => nodes[id]).filter(Boolean);
+        const connectionsToCopy = connections.filter(c => selectedNodeIds.includes(c.fromNodeId) && selectedNodeIds.includes(c.toNodeId));
+        if (nodesToCopy.length > 0) { clipboardRef.current = { nodes: nodesToCopy, connections: connectionsToCopy }; }
       } else if (isCtrlOrMeta && key === 'v') {
-         if (clipboardRef.current) { duplicateNodes(clipboardRef.current.nodes, clipboardRef.current.connections, { x: 50, y: 50 }, true); }
+        if (clipboardRef.current) { duplicateNodes(clipboardRef.current.nodes, clipboardRef.current.connections, { x: 50, y: 50 }, true); }
       } else if (isCtrlOrMeta && key === 's') {
-          event.preventDefault(); setIsSaveModalOpen(true);
+        event.preventDefault(); setIsSaveModalOpen(true);
       } else if (isCtrlOrMeta && key === 'n') {
-          event.preventDefault();
-          if (confirm("Create new project? Unsaved changes will be lost.")) { loadNodes({}, []); loadConnections([]); setHistory([]); restoreTransform({ x: 0, y: 0, k: 1 }); }
-      } else {
-         switch (key) {
-            case 'v': setActiveTool('select'); break;
-            case 'h': setActiveTool('pan'); break;
-            case 'c': setActiveTool('comment'); break;
+        event.preventDefault();
+        if (confirm("Create new project? Unsaved changes will be lost.")) { loadNodes({}, []); loadConnections([]); setHistory([]); restoreTransform({ x: 0, y: 0, k: 1 }); }
+      } else if (!isCtrlOrMeta) {
+        switch (key) {
+          case 'v': setActiveTool('select'); break;
+          case 'h': setActiveTool('pan'); break;
+          case 'c': setActiveTool('comment'); break;
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => { window.removeEventListener('keydown', handleKeyDown); };
-  }, [selectedConnectionId, selectedNodeIds, deleteConnections, selectConnection, setNodes, setNodeRenderOrder, nodes, connections, duplicateNodes]);
+  }, [selectedNodeIds, nodes, connections, duplicateNodes, loadNodes, loadConnections, restoreTransform]);
 
   // pendingConnection 마우스 이동 이벤트 처리: SVG path ref 업데이트
   const updatePendingPath = useCallback((e: MouseEvent) => {
@@ -1961,36 +1969,23 @@ const App: React.FC = () => {
     }, [connections, updateNodeData, onAssetGenerated, setNodes, executeNode]),
   });
 
+  // handleSaveProject: useProjectManager.saveProject 위임 (SPEC-UI-001 M5)
   const handleSaveProject = async (name: string) => {
     setIsSaving(true);
-    const newProject: Project = {
-      id: `proj-${Date.now()}`,
-      name,
-      createdAt: new Date().toISOString(),
-      state: { nodes, connections, history, panZoom, nodeRenderOrder }
-    };
-    const updated = [...projects, newProject];
-    setProjects(updated);
-    await saveProjectsToStorage(updated);
+    await pmSaveProject(name);
     setIsSaving(false);
     setIsSaveModalOpen(false);
   };
 
+  // handleLoadProject: useProjectManager.loadProject 위임 (SPEC-UI-001 M5)
   const handleLoadProject = (id: string) => {
-    const project = projects.find(p => p.id === id);
-    if (project) {
-      loadNodes(project.state.nodes, project.state.nodeRenderOrder || Object.keys(project.state.nodes));
-      loadConnections(project.state.connections);
-      setHistory(project.state.history);
-      restoreTransform(project.state.panZoom);
-      setIsLoadModalOpen(false);
-    }
+    pmLoadProject(id);
+    setIsLoadModalOpen(false);
   };
 
+  // handleDeleteProject: useProjectManager.deleteProject 위임 (SPEC-UI-001 M5)
   const handleDeleteProject = async (id: string) => {
-    const updated = projects.filter(p => p.id !== id);
-    setProjects(updated);
-    await saveProjectsToStorage(updated);
+    await pmDeleteProject(id);
   };
 
   const handleExportProject = (id: string) => {
@@ -2005,6 +2000,7 @@ const App: React.FC = () => {
     }
   };
 
+  // handleImportProject: 프로젝트 JSON 파일 가져오기 — 캔버스에 상태 복원 (SPEC-UI-001 M5)
   const handleImportProject = async (project: Project) => {
     if (project && project.state) {
       loadNodes(project.state.nodes, project.state.nodeRenderOrder || Object.keys(project.state.nodes));
@@ -2012,11 +2008,10 @@ const App: React.FC = () => {
       setHistory(project.state.history);
       restoreTransform(project.state.panZoom);
 
-      // Also add to projects list if it doesn't exist
+      // 가져온 프로젝트를 목록에 추가 (직접 IndexedDB 저장)
       if (!projects.find(p => p.id === project.id)) {
           const updated = [...projects, project];
-          setProjects(updated);
-          await saveProjectsToStorage(updated);
+          try { await saveProjectsList(updated); } catch (e) { console.error('프로젝트 가져오기 저장 실패:', e); }
       }
     }
   };
