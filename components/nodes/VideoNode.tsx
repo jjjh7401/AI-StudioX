@@ -70,11 +70,21 @@ const VideoNode: React.FC<VideoNodeProps> = ({ node, onDataChange, onGenerate, c
                 <p className="text-indigo-300 text-xs font-bold leading-relaxed">{data.loadingMessage}</p>
            </div>
         ) : data.videoUrl ? (
-          <video src={data.videoUrl} crossOrigin="anonymous" controls autoPlay loop className="w-full h-full object-contain rounded-md" />
+          <div className="flex flex-col items-center justify-center w-full h-full relative">
+            <video src={data.videoUrl} crossOrigin="anonymous" controls autoPlay loop className="w-full h-full object-contain rounded-md" />
+            {data.loadingMessage && data.loadingMessage.startsWith('Error:') && (
+              <div className="absolute inset-0 bg-gray-900/80 flex items-center justify-center p-2">
+                <p className="text-red-400 text-[10px] text-center break-words w-full">{data.loadingMessage}</p>
+              </div>
+            )}
+          </div>
         ) : (
           <div className="text-center p-4">
              <FilmIcon className="w-12 h-12 text-gray-700 mx-auto mb-2" />
              <p className="text-gray-500 text-xs">Connect inputs and click generate.</p>
+             {data.loadingMessage && data.loadingMessage.startsWith('Error:') && (
+                <p className="text-red-400 text-[10px] mt-2 text-center break-words w-full">{data.loadingMessage}</p>
+             )}
           </div>
         )}
       </div>

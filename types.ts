@@ -90,6 +90,7 @@ export interface AssistantNodeData {
 export interface ImageNodeData {
   imageUrls: (string | null)[];
   isLoading: boolean;
+  loadingMessage?: string;
   model: string;
   aspectRatio: string;
   numberOfImages: number;
@@ -109,6 +110,7 @@ export interface ImageEditNodeData {
     inputImageUrl: string | null;
     outputImageUrl: string | null;
     isLoading: boolean;
+    loadingMessage?: string;
     imageSize?: '1K' | '2K' | '4K';
 }
 

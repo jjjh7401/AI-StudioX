@@ -54,22 +54,14 @@ import { PanZoom } from './types';
 import HistoryPanel from './components/HistoryPanel';
 import { generateText, generateImage, editImage, removeBackground, expandImage, upscaleImage, generateVirtualModel, generateModelFromImage, generateVtonImage, generateStoryboardScenario, generateConsistentImage, analyzeProductInfo, generateScriptFromStyle, captureImagesFromUrl, generateFinalPrompt, constructPromptFromShot, preprocessImageForOutpainting, generateVideo, detectGridItems } from './services/geminiService';
 import { compositeImages, stitchImages, urlToDataURL, addSolidBackground, cropAndTrimImage } from './services/imageProcessingService';
-import { PlayIcon } from '@heroicons/react/24/outline';
+import { PlayIcon, KeyIcon } from '@heroicons/react/24/outline';
 import { COMPOSITE_NODE_HEADER_HEIGHT, COMPOSITE_NODE_CONTENT_PADDING_X, COMPOSITE_NODE_CONTENT_PADDING_Y_TOP, COMPOSITE_NODE_CONTENT_PADDING_Y_BOTTOM, COMPOSITE_NODE_BUTTON_HEIGHT, COMPOSITE_NODE_INTERNAL_SPACING, POSE_PRESETS, RMBG_DEFAULT_BACKGROUND_COLOR, MODEL_NATIONALITIES, MODEL_FACE_SHAPES, MODEL_HAIR_STYLES, MODEL_HAIR_COLORS } from './data/constants';
 import { SYSTEM_PROMPTS } from './data/systemPrompts';
 import ZoomControls from './components/ZoomControls';
 import ProjectControls from './components/ProjectControls';
-import { storeAsset, getAsset, dataURLToBlob, saveProjectsList } from './services/dbService';
+import { storeAsset, getAsset, dataURLToBlob, saveProjectsList, getProjectsList } from './services/dbService';
 import { CATEGORY_STYLES } from './data/scriptStyles';
 import PlaygroundModal from './components/PlaygroundModal'; // Import Playground Modal
-import { createNode } from './factories/nodeFactory';
-import { useCanvas } from './hooks/useCanvas';
-import { useNodes } from './hooks/useNodes';
-import { useConnections } from './hooks/useConnections';
-import { useNodeGeneration } from './hooks/useNodeGeneration';
-import { useUndoRedo } from './hooks/useUndoRedo';
-import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
-import { useProjectManager } from './hooks/useProjectManager';
 
 interface DraggableNodeWrapperProps {
   node: Node;
@@ -169,110 +161,30 @@ const isNodeInsideGroup = (node: Node, group: Node): boolean => {
 };
 
 const App: React.FC = () => {
-  const nodesRef = useRef<Record<string, Node>>({}); // 이벤트 핸들러 최신 nodes 접근용 ref
+  const [nodes, setNodes] = useImmer<Record<string, Node>>({});
+  const nodesRef = useRef(nodes); // Ref to access latest nodes in event listeners
+  const [connections, setConnections] = useImmer<Connection[]>([]);
   const [history, setHistory] = useImmer<HistoryAsset[]>([]);
-  // panZoom 상태는 useCanvas 훅으로 이동됨 (SPEC-UI-001 M1)
-  const selectedNodeIdsRef = useRef<string[]>([]); // 이벤트 핸들러 최신 selectedNodeIds 접근용 ref
+  const [panZoom, setPanZoom] = useState<PanZoom>({ x: 0, y: 0, k: 1 });
+  const [pendingConnection, setPendingConnection] = useState<
+    { fromNodeId: string; fromConnector: Connector } | undefined
+  >();
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const selectedNodeIdsRef = useRef(selectedNodeIds); // Keep ref in sync for event handlers
+  
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>('select');
   const [selectionBox, setSelectionBox] = useState<{ x: number, y: number, width: number, height: number } | null>(null);
   const selectionStartPoint = useRef<Point | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const pendingConnectionPathRef = useRef<SVGPathElement>(null);
   const [isGeneratingAll, setIsGeneratingAll] = useState(false);
-  // useCanvas: D3 zoom/pan 로직을 훅으로 분리 (SPEC-UI-001 M1)
-  const {
-    panZoom,
-    zoomIn,
-    zoomOut,
-    zoomToFit,
-    getWorldPosition,
-    restoreTransform,
-    isMiddleMousePanning,
-  } = useCanvas({
-    svgRef,
-    activeTool,
-    onPanZoomChange: () => {}, // panZoom 상태는 훅 내부에서 관리됨
-  });
-  // nodeRenderOrderRef는 저장 시 최신값 접근을 위해 유지
+  const [isMiddleMousePanning, setIsMiddleMousePanning] = useState(false);
+  const zoomBehaviorRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const nodeRenderOrderRef = useRef<string[]>([]);
-  // deleteConnectionsForNodesRef: useNodes onNodesDeleted 콜백에서 useConnections 메서드 참조용
-  // useConnections 초기화 전에 useNodes가 필요하므로 ref로 순환 의존성 해결
-  const deleteConnectionsForNodesRef = useRef<(nodeIds: string[]) => void>(() => {});
-
-  // useNodes: 노드 CRUD, 선택, 이동, 복제, Collapse/Bypass 관리 훅 (SPEC-UI-001 M2)
-  // @MX:NOTE: nodes/selectedNodeIds/nodeRenderOrder 상태가 useNodes 훅으로 이동됨
-  const {
-    nodes,
-    nodeRenderOrder,
-    addNode: hookAddNode,
-    deleteNodes,
-    duplicateNode: hookDuplicateNode,
-    updateNodeData,
-    moveNodes,
-    resizeNode: hookResizeNode,
-    toggleCollapse: handleToggleCollapse,
-    toggleBypass: handleToggleBypass,
-    setNodes,
-    setNodeRenderOrder,
-    setSelectedNodeIds: setSelectedNodeIdsInHook,
-    loadNodes,
-  } = useNodes({
-    getWorldPosition,
-    panZoom,
-    onNodesDeleted: (nodeIds) => {
-      // 삭제된 노드에 연결된 커넥션 제거 (useConnections 훅의 deleteConnectionsForNodes 위임)
-      deleteConnectionsForNodesRef.current(nodeIds);
-    },
-  });
-
-  // useConnections: 커넥션 생성/삭제/선택 훅 (SPEC-UI-001 M3)
-  // @MX:NOTE: connections/pendingConnection/selectedConnectionId 상태가 useConnections 훅으로 이동됨
-  const {
-    connections,
-    selectedConnectionId,
-    pendingConnection,
-    startConnection: hookStartConnection,
-    completeConnection: endConnection,
-    cancelConnection,
-    deleteConnections,
-    selectConnection,
-    deleteConnectionsForNodes,
-    loadConnections,
-  } = useConnections({ nodes, getWorldPosition });
-
-  // deleteConnectionsForNodesRef 업데이트: useNodes의 onNodesDeleted에서 참조
-  deleteConnectionsForNodesRef.current = deleteConnectionsForNodes;
-
-  // selectedNodeIds: 배열 기반으로 App.tsx 내부 로직에서 사용
-  // @MX:NOTE: selectedNodeIds 배열과 useNodes 훅의 Set 상태를 동기화하여 관리 (SPEC-UI-001 M2)
-  const [selectedNodeIds, setSelectedNodeIdsLocal] = useState<string[]>([]);
-
-  // setSelectedNodeIds: 로컬 배열 상태 + 훅 Set 상태 + ref 동기화
-  const setSelectedNodeIds = useCallback((ids: string[]) => {
-    setSelectedNodeIdsLocal(ids);
-    setSelectedNodeIdsInHook(ids);
-    selectedNodeIdsRef.current = ids;
-  }, [setSelectedNodeIdsInHook]);
+  const [nodeRenderOrder, setNodeRenderOrder] = useImmer<string[]>([]);
   
-  // useUndoRedo: 노드/커넥션 상태 스냅샷 기반 Undo/Redo (SPEC-UI-001 M5)
-  const undoPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { pushState: pushUndoState, undo: undoState } = useUndoRedo<{
-    nodes: Record<string, Node>;
-    connections: Connection[];
-    nodeRenderOrder: string[];
-  }>();
-
-  // useProjectManager: IndexedDB 기반 프로젝트 저장/로드/삭제 (SPEC-UI-001 M5)
-  const { projects, saveProject: pmSaveProject, loadProject: pmLoadProject, deleteProject: pmDeleteProject } = useProjectManager({
-    getState: () => ({ nodes, connections, history, panZoom, nodeRenderOrder }),
-    onStateLoaded: (state) => {
-      loadNodes(state.nodes, state.nodeRenderOrder || Object.keys(state.nodes));
-      loadConnections(state.connections);
-      setHistory(state.history);
-      restoreTransform(state.panZoom);
-    },
-  });
-
+  const [projects, setProjects] = useImmer<Project[]>([]);
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -283,21 +195,46 @@ const App: React.FC = () => {
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
 
   useEffect(() => {
+    let attempts = 0;
     const checkApiKey = async () => {
-      if (window.aistudio?.hasSelectedApiKey) {
-        const hasKey = await window.aistudio.hasSelectedApiKey();
-        setHasApiKey(hasKey);
-      } else {
-        setHasApiKey(true); // Fallback if API is not available
+      try {
+        if (window.aistudio?.hasSelectedApiKey) {
+          const hasKey = await window.aistudio.hasSelectedApiKey();
+          setHasApiKey(hasKey);
+        } else if (attempts < 5) {
+          attempts++;
+          setTimeout(checkApiKey, 1000);
+        } else {
+          // If not in AI Studio environment after 5 seconds
+          // In shared apps or deployed apps, we don't have window.aistudio
+          // We should assume the API key is handled by the server proxy
+          setHasApiKey(true);
+        }
+      } catch (error) {
+        console.error("Error checking API key:", error);
+        setHasApiKey(true);
       }
     };
     checkApiKey();
   }, []);
 
   const handleSelectKey = async () => {
+    console.log("handleSelectKey called, window.aistudio:", !!window.aistudio);
     if (window.aistudio?.openSelectKey) {
-      await window.aistudio.openSelectKey();
-      setHasApiKey(true); // Assume success to avoid race conditions
+      try {
+        await window.aistudio.openSelectKey();
+        if (window.aistudio.hasSelectedApiKey) {
+          const hasKey = await window.aistudio.hasSelectedApiKey();
+          setHasApiKey(hasKey);
+        }
+      } catch (error) {
+        console.error("Error opening API key selection:", error);
+      }
+    } else {
+      // For shared/deployed apps, we can't "select" a key via the platform dialog
+      // but we can inform the user that the app uses the server-side key.
+      alert("This application is running in standalone mode and uses the API key configured on the server. Manual key selection is only available within the AI Studio development environment.");
+      setHasApiKey(true);
     }
   };
 
@@ -311,14 +248,45 @@ const App: React.FC = () => {
       selectedNodeIdsRef.current = selectedNodeIds;
   }, [selectedNodeIds]);
 
-  // 노드/커넥션 변경 시 undo 히스토리에 스냅샷 저장 (300ms 디바운스, SPEC-UI-001 M5)
+  const saveProjectsToStorage = useCallback(async (updatedProjects: Project[]) => {
+      try {
+          await saveProjectsList(updatedProjects);
+      } catch (error) {
+          console.error("Failed to save projects to IndexedDB:", error);
+          alert("프로젝트 저장에 실패했습니다.");
+      }
+  }, []);
+
   useEffect(() => {
-    if (undoPushTimerRef.current) clearTimeout(undoPushTimerRef.current);
-    undoPushTimerRef.current = setTimeout(() => {
-      pushUndoState({ nodes, connections, nodeRenderOrder });
-    }, 300);
-    return () => { if (undoPushTimerRef.current) clearTimeout(undoPushTimerRef.current); };
-  }, [nodes, connections, nodeRenderOrder, pushUndoState]);
+    const loadInitialData = async () => {
+        try {
+            const savedProjects = await getProjectsList();
+
+            if (savedProjects && savedProjects.length > 0) {
+                setProjects(savedProjects);
+            }
+            else {
+                const defaultProject: Project = {
+                    id: `proj-initial-state`,
+                    name: 'New',
+                    createdAt: new Date().toISOString(),
+                    state: {
+                        nodes: {},
+                        connections: [],
+                        history: [],
+                        panZoom: { x: 0, y: 0, k: 1 },
+                        nodeRenderOrder: [],
+                    },
+                };
+                setProjects([defaultProject]);
+                await saveProjectsToStorage([defaultProject]);
+            }
+        } catch (error) {
+            console.error("Failed to load or initialize projects from IndexedDB:", error);
+        }
+    };
+    loadInitialData();
+  }, [setProjects, saveProjectsToStorage]);
 
   const getConnectorPosition = useCallback((nodeId: string, connectorId: string, isInput: boolean): Point => {
     const node = nodes[nodeId];
@@ -405,7 +373,13 @@ const App: React.FC = () => {
     return { x, y };
   }, [nodes]);
 
-  // updateNodeData는 useNodes 훅에서 제공됨 (SPEC-UI-001 M2)
+  const updateNodeData = useCallback((id: string, data: Partial<NodeData>) => {
+    setNodes(draft => {
+      if(draft[id]) {
+        draft[id].data = { ...draft[id].data, ...data } as any;
+      }
+    });
+  }, [setNodes]);
 
   const onVideoProgress = useCallback((nodeId: string, message: string) => {
     setNodes(draft => {
@@ -818,7 +792,7 @@ const App: React.FC = () => {
         if (result && result.length > 0) {
             result.forEach(url => onAssetGenerated({ type: 'image', url }));
         }
-        return { data: { ...data, imageUrls: result } };
+        return { data: { ...data, imageUrls: result, loadingMessage: undefined } };
       }
       case NodeType.ImagePreview: {
         const data = node.data as ImagePreviewNodeData;
@@ -837,7 +811,7 @@ const App: React.FC = () => {
         if (result && result.length > 0) {
             result.forEach(url => onAssetGenerated({ type: 'image', url }));
         }
-        return { data: { ...data, imageUrls: result } };
+        return { data: { ...data, imageUrls: result, loadingMessage: undefined } };
       }
       case NodeType.ImageEdit: {
         const data = node.data as ImageEditNodeData;
@@ -851,7 +825,7 @@ const App: React.FC = () => {
         if (result) {
             onAssetGenerated({ type: 'image', url: result });
         }
-        return { data: { ...data, outputImageUrl: result } };
+        return { data: { ...data, outputImageUrl: result, loadingMessage: undefined } };
       }
       case NodeType.ImageModify: {
         const data = node.data as ImageModifyNodeData;
@@ -983,7 +957,8 @@ const App: React.FC = () => {
                 videoUrl: result.videoUrl, 
                 lastFrameUrl: result.lastFrameUrl,
                 firstFrameUrl: result.firstFrameUrl,
-                videoObject: result.videoObject 
+                videoObject: result.videoObject,
+                loadingMessage: undefined
             } 
         };
       }
@@ -1257,8 +1232,7 @@ const App: React.FC = () => {
                     name: `Image Out ${i + 1}`,
                     type: ConnectorType.Image
                 });
-                // outputs는 NodeData 타입이 아니므로 setNodes로 직접 업데이트
-                setNodes(draft => { if(draft[nodeId]) { draft[nodeId].data = { ...draft[nodeId].data, scriptData: { ...scriptDataFromApi!, shotList: currentShots } } as any; draft[nodeId].outputs = newOutputs; } });
+                updateNodeData(nodeId, { scriptData: { ...scriptDataFromApi!, shotList: currentShots }, outputs: newOutputs });
             }
         }
 
@@ -1359,7 +1333,44 @@ const App: React.FC = () => {
     nodeRenderOrderRef.current = nodeRenderOrder;
   }, [nodeRenderOrder]);
 
-  // D3 zoom useEffect는 useCanvas 훅으로 이동됨 (SPEC-UI-001 M1)
+  useEffect(() => {
+    const svg = d3.select(svgRef.current);
+    if (!svg.node()) return;
+
+    const zoom = d3
+      .zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.2, 3])
+      .filter((event: MouseEvent) => {
+        const isNode = !!(event.target as Element).closest('.node-body');
+        if (isNode) return false;
+        if (event.type === 'wheel') return true;
+        if (event.type === 'mousedown' && activeTool === 'pan') return true;
+        if (event.type === 'mousedown' && activeTool === 'select' && event.button === 1) {
+            return true;
+        }
+        return false;
+      })
+      .on('start', (event) => {
+        if (activeTool === 'select' && event.sourceEvent && (event.sourceEvent as MouseEvent).button === 1) {
+            setIsMiddleMousePanning(true);
+        }
+      })
+      .on('zoom', (event) => {
+        setPanZoom(event.transform);
+      })
+      .on('end', () => {
+        setIsMiddleMousePanning(false);
+      });
+      
+    zoomBehaviorRef.current = zoom;
+    svg.call(zoom);
+    svg.on('dblclick.zoom', null);
+
+    return () => {
+        svg.on('.zoom', null);
+    };
+
+  }, [activeTool]);
 
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
@@ -1410,91 +1421,72 @@ const App: React.FC = () => {
           id: generateId('conn'), fromNodeId: idMap[conn.fromNodeId], fromConnectorId: conn.fromConnectorId, toNodeId: idMap[conn.toNodeId], toConnectorId: conn.toConnectorId
       }));
       setNodes(draft => { newNodes.forEach(node => draft[node.id] = node); });
-      loadConnections([...connections, ...newConnections]);
+      setConnections(draft => { draft.push(...newConnections); });
       setNodeRenderOrder(draft => {
           newNodes.forEach(node => {
               if (node.type === NodeType.Group) { draft.unshift(node.id); } else { draft.push(node.id); }
           });
       });
       if (selectNewNodes) { setSelectedNodeIds(newNodes.map(n => n.id)); }
-  }, [setNodes, loadConnections, connections, setNodeRenderOrder]);
+  }, [setNodes, setConnections, setNodeRenderOrder]);
 
-  // useKeyboardShortcuts: Delete/Bypass/Duplicate/Undo/SelectAll 단축키 (SPEC-UI-001 M5)
-  useKeyboardShortcuts({
-    onDelete: () => {
-      if (selectedConnectionId) { deleteConnections([selectedConnectionId]); selectConnection(undefined); }
-      if (selectedNodeIds.length > 0) {
-        setNodes(draft => { selectedNodeIds.forEach(id => { delete draft[id]; }); });
-        deleteConnectionsForNodes(selectedNodeIds);
-        setNodeRenderOrder(draft => draft.filter(id => !selectedNodeIds.includes(id)));
-        setSelectedNodeIds([]);
-      }
-    },
-    onBypass: () => {
-      if (selectedNodeIds.length > 0) { selectedNodeIds.forEach(id => handleToggleBypass(id)); }
-    },
-    onDuplicate: () => {
-      if (selectedNodeIds.length > 0) {
-        const nodesToCopy = selectedNodeIds.map(id => nodes[id]).filter(Boolean);
-        const connectionsToCopy = connections.filter(c => selectedNodeIds.includes(c.fromNodeId) && selectedNodeIds.includes(c.toNodeId));
-        if (nodesToCopy.length > 0) { duplicateNodes(nodesToCopy, connectionsToCopy, { x: 50, y: 50 }, true); }
-      }
-    },
-    onUndo: () => {
-      const prev = undoState();
-      if (prev) { loadNodes(prev.nodes, prev.nodeRenderOrder); loadConnections(prev.connections); }
-    },
-    onSelectAll: () => { setSelectedNodeIds(Object.keys(nodes)); },
-  });
-
-  // 나머지 단축키 (Ctrl+C/V/S/N, V/H/C 도구 전환) — useKeyboardShortcuts에 포함되지 않는 단축키
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) { return; }
       const isCtrlOrMeta = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
-      if (isCtrlOrMeta && key === 'c') {
-        const nodesToCopy = selectedNodeIds.map(id => nodes[id]).filter(Boolean);
-        const connectionsToCopy = connections.filter(c => selectedNodeIds.includes(c.fromNodeId) && selectedNodeIds.includes(c.toNodeId));
-        if (nodesToCopy.length > 0) { clipboardRef.current = { nodes: nodesToCopy, connections: connectionsToCopy }; }
+      if ((event.key === 'Delete' || event.key === 'Backspace') && (selectedConnectionId || selectedNodeIds.length > 0)) {
+        if (selectedConnectionId) { setConnections(draft => draft.filter(c => c.id !== selectedConnectionId)); setSelectedConnectionId(null); }
+        if (selectedNodeIds.length > 0) {
+            setNodes(draft => { selectedNodeIds.forEach(id => { delete draft[id]; }); });
+            setConnections(draft => draft.filter(c => !selectedNodeIds.includes(c.fromNodeId) && !selectedNodeIds.includes(c.toNodeId)));
+            setNodeRenderOrder(draft => draft.filter(id => !selectedNodeIds.includes(id)));
+            setSelectedNodeIds([]);
+        }
+      } else if (isCtrlOrMeta && key === 'b') {
+          event.preventDefault();
+          if (selectedNodeIds.length > 0) { selectedNodeIds.forEach(id => handleToggleBypass(id)); }
+      } else if (isCtrlOrMeta && key === 'c') {
+         const nodesToCopy = selectedNodeIds.map(id => nodes[id]).filter(Boolean);
+         const connectionsToCopy = connections.filter(c => selectedNodeIds.includes(c.fromNodeId) && selectedNodeIds.includes(c.toNodeId));
+         if (nodesToCopy.length > 0) { clipboardRef.current = { nodes: nodesToCopy, connections: connectionsToCopy }; }
       } else if (isCtrlOrMeta && key === 'v') {
-        if (clipboardRef.current) { duplicateNodes(clipboardRef.current.nodes, clipboardRef.current.connections, { x: 50, y: 50 }, true); }
+         if (clipboardRef.current) { duplicateNodes(clipboardRef.current.nodes, clipboardRef.current.connections, { x: 50, y: 50 }, true); }
       } else if (isCtrlOrMeta && key === 's') {
-        event.preventDefault(); setIsSaveModalOpen(true);
+          event.preventDefault(); setIsSaveModalOpen(true);
       } else if (isCtrlOrMeta && key === 'n') {
-        event.preventDefault();
-        if (confirm("Create new project? Unsaved changes will be lost.")) { loadNodes({}, []); loadConnections([]); setHistory([]); restoreTransform({ x: 0, y: 0, k: 1 }); }
-      } else if (!isCtrlOrMeta) {
-        switch (key) {
-          case 'v': setActiveTool('select'); break;
-          case 'h': setActiveTool('pan'); break;
-          case 'c': setActiveTool('comment'); break;
+          event.preventDefault();
+          if (confirm("Create new project? Unsaved changes will be lost.")) { setNodes({}); setConnections([]); setHistory([]); setPanZoom({ x: 0, y: 0, k: 1 }); }
+      } else {
+         switch (key) {
+            case 'v': setActiveTool('select'); break;
+            case 'h': setActiveTool('pan'); break;
+            case 'c': setActiveTool('comment'); break;
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => { window.removeEventListener('keydown', handleKeyDown); };
-  }, [selectedNodeIds, nodes, connections, duplicateNodes, loadNodes, loadConnections, restoreTransform]);
+  }, [selectedConnectionId, selectedNodeIds, setConnections, setNodes, setNodeRenderOrder, nodes, connections, duplicateNodes]);
 
-  // pendingConnection 마우스 이동 이벤트 처리: SVG path ref 업데이트
   const updatePendingPath = useCallback((e: MouseEvent) => {
     if (!pendingConnection || !svgRef.current || !pendingConnectionPathRef.current) return;
     const svgBounds = svgRef.current.getBoundingClientRect();
-    const [worldX, worldY] = getWorldPosition(e.clientX - svgBounds.left, e.clientY - svgBounds.top);
+    const currentTransform = d3.zoomTransform(svgRef.current);
+    const [worldX, worldY] = currentTransform.invert([e.clientX - svgBounds.left, e.clientY - svgBounds.top]);
     const fromPoint = getConnectorPosition(pendingConnection.fromNodeId, pendingConnection.fromConnector.id, false);
     const toPoint = { x: worldX, y: worldY };
     const pathData = `M ${fromPoint.x} ${fromPoint.y} C ${fromPoint.x + 75} ${fromPoint.y}, ${toPoint.x - 75} ${toPoint.y}, ${toPoint.x} ${toPoint.y}`;
     pendingConnectionPathRef.current.setAttribute('d', pathData);
-  }, [pendingConnection, getConnectorPosition, getWorldPosition]);
+  }, [pendingConnection, getConnectorPosition]);
 
-  // mouseup 시 pendingConnection path 숨기기 및 연결 취소
   const handleWindowMouseUp = useCallback(() => {
-    if (pendingConnection) {
-      if (pendingConnectionPathRef.current) { pendingConnectionPathRef.current.style.display = 'none'; }
-      cancelConnection();
+    if(pendingConnection) {
+        if (pendingConnectionPathRef.current) { pendingConnectionPathRef.current.style.display = 'none'; }
+        setPendingConnection(undefined);
     }
-  }, [pendingConnection, cancelConnection]);
-
+  }, [pendingConnection, setPendingConnection]);
+  
   useEffect(() => {
     if (pendingConnection) {
       window.addEventListener('mousemove', updatePendingPath);
@@ -1506,46 +1498,67 @@ const App: React.FC = () => {
     }
   }, [pendingConnection, updatePendingPath, handleWindowMouseUp]);
 
-  // addNode: 화면 중앙 좌표를 계산하여 훅의 addNode에 전달
-  // useNodes 훅의 getWorldPosition을 화면 중앙 좌표로 호출하기 위해 래퍼 유지
-  const addNode = useCallback((type: NodeType) => {
+  const addNode = (type: NodeType) => {
     const id = `${type}-${Date.now()}`;
     let x = 100; let y = 100;
     if (svgRef.current) {
         const svgBounds = svgRef.current.getBoundingClientRect();
-        const [worldX, worldY] = getWorldPosition(svgBounds.width / 2, svgBounds.height / 2);
+        const currentTransform = d3.zoomTransform(svgRef.current);
+        const [worldX, worldY] = currentTransform.invert([svgBounds.width / 2, svgBounds.height / 2]);
         x = worldX; y = worldY;
     }
-    // 대부분의 노드: 기본 위치 오프셋
-    let position = { x: x - 150, y: y - 100 };
-
-    // 대형 노드: 위치 오프셋 조정
-    if (type === NodeType.Storyboard) position = { x: x - 375, y: y - 550 };
-    else if (type === NodeType.Script) position = { x: x - 400, y: y - 450 };
-
-    const newNode = createNode(type, id, position);
-
-    // 동적 상수값이 필요한 노드: 기본값을 상수로 덮어쓰기
-    if (type === NodeType.Assistant) {
-      (newNode.data as unknown as { systemPrompt: string }).systemPrompt = SYSTEM_PROMPTS['Image & Video'];
+    let newNode: Node;
+    const baseNode = { id, type, position: { x: x - 150, y: y - 100 }, isCollapsed: false, isBypassed: false };
+    switch (type) {
+      case NodeType.Text: newNode = { ...baseNode, size: { width: 350, height: 250 }, data: { text: '', textScale: 1 }, inputs: [], outputs: [{ id: 'text-out', name: 'Text Out', type: ConnectorType.Text }] }; break;
+      case NodeType.Assistant: newNode = { ...baseNode, size: { width: 400, height: 500 }, data: { prompt: '', response: '', isLoading: false, systemPrompt: SYSTEM_PROMPTS['Image & Video'] }, inputs: [{ id: 'text-in-0', name: 'Text In 1', type: ConnectorType.Text }, { id: 'text-in-1', name: 'Text In 2', type: ConnectorType.Text }, { id: 'image-in-0', name: 'Image In 1', type: ConnectorType.Image }, { id: 'image-in-1', name: 'Image In 2', type: ConnectorType.Image }, { id: 'reference-in', name: 'Reference In', type: ConnectorType.Image }], outputs: [{ id: 'prompt-out', name: 'Text(Prompt) Out', type: ConnectorType.Text }] }; break;
+      case NodeType.Image: newNode = { ...baseNode, size: { width: 400, height: 500 }, data: { imageUrls: [], isLoading: false, model: 'gemini-3.1-flash-image-preview', aspectRatio: '16:9', numberOfImages: 1, imageSize: '1K' }, inputs: [{ id: 'text-in-0', name: 'Text(Prompt) In 1', type: ConnectorType.Text }, { id: 'text-in-1', name: 'Text(Prompt) In 2', type: ConnectorType.Text }, {id: 'image-in', name: 'Image In', type: ConnectorType.Image}, {id: 'reference-in', name: 'Reference In', type: ConnectorType.Image}], outputs: [{ id: 'image-out', name: 'Image Out', type: ConnectorType.Image }] }; break;
+      case NodeType.ImagePreview: newNode = { ...baseNode, size: { width: 400, height: 500 }, data: { imageUrls: [], isLoading: false, model: 'gemini-2.5-flash-image', aspectRatio: '16:9', numberOfImages: 1 }, inputs: [{ id: 'text-in-0', name: 'Text(Prompt) In 1', type: ConnectorType.Text }, { id: 'text-in-1', name: 'Text(Prompt) In 2', type: ConnectorType.Text }, {id: 'image-in', name: 'Image In', type: ConnectorType.Image}, {id: 'reference-in', name: 'Reference In', type: ConnectorType.Image}], outputs: [{ id: 'image-out', name: 'Image Out', type: ConnectorType.Image }] }; break;
+      case NodeType.ImageEdit: newNode = { ...baseNode, size: { width: 400, height: 500 }, data: { inputImageUrl: null, outputImageUrl: null, isLoading: false, imageSize: '1K' }, inputs: [{ id: 'text-in-0', name: 'Text(Prompt) In 1', type: ConnectorType.Text }, { id: 'text-in-1', name: 'Text(Prompt) In 2', type: ConnectorType.Text }, {id: 'image-in', name: 'Image In', type: ConnectorType.Image}, {id: 'reference-in', name: 'Reference In', type: ConnectorType.Image}], outputs: [{ id: 'image-out', name: 'Image Out', type: ConnectorType.Image }] }; break;
+      case NodeType.ImageLoad: newNode = { ...baseNode, size: { width: 300, height: 300 }, data: { imageUrls: [] }, inputs: [], outputs: [{ id: 'image-out', name: 'Image Out', type: ConnectorType.Image }] }; break;
+      case NodeType.VideoLoad: newNode = { ...baseNode, size: { width: 300, height: 300 }, data: { videoUrl: null, fileName: null }, inputs: [], outputs: [{ id: 'video-out', name: 'Video Out', type: ConnectorType.Video }] }; break;
+      case NodeType.VideoStitch: newNode = { ...baseNode, size: { width: 400, height: 500 }, data: { video1Url: null, video2Url: null, outputVideoUrl: null, isLoading: false, video1TrimFrames: 10, video2TrimFrames: 10 }, inputs: [{ id: 'video-in-1', name: 'Video In 1', type: ConnectorType.Video }, { id: 'video-in-2', name: 'Video In 2', type: ConnectorType.Video }], outputs: [{ id: 'video-out', name: 'Video Out', type: ConnectorType.Video }] }; break;
+      case NodeType.Model: newNode = { ...baseNode, size: { width: 550, height: 700 }, data: { gender: 'Woman', age: '25', nationality: 'Korean', faceShape: 'random', hairStyle: 'random', hairColor: 'random', additionalPrompt: '', outputImageUrl: null, isLoading: false }, inputs: [{id: 'image-in', name: 'Image In', type: ConnectorType.Image}], outputs: [{ id: 'image-out', name: 'Image Out', type: ConnectorType.Image }] }; break;
+      case NodeType.Vton: newNode = { ...baseNode, size: { width: 900, height: 700 }, data: { mainImageUrl: null, baseModelUrl: null, outfitItems: [], selectedOutfitId: null, pose: POSE_PRESETS[0], stylingList: [], selectedStylingId: 'base', isLoading: false, outputImageUrl: null }, inputs: [{ id: 'model-in', name: 'Model In', type: ConnectorType.Image }, { id: 'outfit-in', name: 'Outfit In', type: ConnectorType.Image }], outputs: [{ id: 'image-out', name: 'Styling Out', type: ConnectorType.Image }] }; break;
+      case NodeType.Video: newNode = { ...baseNode, size: { width: 450, height: 500 }, data: { firstImageUrl: null, lastImageUrl: null, videoUrl: null, isLoading: false, loadingMessage: '', resolution: '720p', aspectRatio: '16:9', lastFrameUrl: null, firstFrameUrl: null, videoObject: null }, inputs: [{ id: 'text-in-0', name: 'Prompt', type: ConnectorType.Text }, { id: 'first-image-in', name: 'Start Frame', type: ConnectorType.Image }, { id: 'last-image-in', name: 'End Frame', type: ConnectorType.Image }, { id: 'video-in', name: 'Extend Video', type: ConnectorType.Video }, { id: 'reference-image-in', name: 'Reference Frame', type: ConnectorType.Image }], outputs: [{ id: 'start-frame-out', name: 'Start Frame', type: ConnectorType.Image }, { id: 'end-frame-out', name: 'End Frame', type: ConnectorType.Image }, { id: 'video-out', name: 'Video Out', type: ConnectorType.Video }] }; break;
+      case NodeType.Camera: newNode = { ...baseNode, size: { width: 380, height: 270 }, data: { controls: { rotation: 0, zoom: 0, verticalAngle: 0, wideAngle: false }, text: '' }, inputs: [], outputs: [{ id: 'text-out', name: 'Text Out', type: ConnectorType.Text }] }; break;
+      case NodeType.CameraPreset: newNode = { ...baseNode, size: { width: 350, height: 480 }, data: { direction: 'center', focalLength: '50mm', angle: 'Eye Level', shotSize: 'Medium Shot', prompt: 'Professional Medium Shot, eye-level straight perspective photography, captured with a 50mm standard prime lens. The subject is shown from a front view, straight-on.' }, inputs: [], outputs: [{ id: 'text-out', name: 'Prompt Out', type: ConnectorType.Text }] }; break;
+      case NodeType.Preset: newNode = { ...baseNode, size: { width: 350, height: 500 }, data: { selectedPrompts: [], text: '' }, inputs: [], outputs: [{ id: 'text-out', name: 'Text Out', type: ConnectorType.Text }] }; break;
+      case NodeType.Comment: newNode = { ...baseNode, size: { width: 250, height: 150 }, data: { text: 'New Comment' }, inputs: [], outputs: [] }; break;
+      case NodeType.Array: newNode = { ...baseNode, size: { width: 300, height: 300 }, data: { text: '', separator: '*', items: [] }, inputs: [{ id: 'text-in', name: 'Text In', type: ConnectorType.Text }], outputs: [{ id: 'array-out', name: 'Array Out', type: ConnectorType.Array }] }; break;
+      case NodeType.List: newNode = { ...baseNode, size: { width: 200, height: 150 }, data: { arrayInput: [], index: 0, output: '' }, inputs: [{ id: 'array-in', name: 'Array In', type: ConnectorType.Array }], outputs: [{ id: 'text-out', name: 'Text Out', type: ConnectorType.Text }] }; break;
+      case NodeType.PromptConcatenator: newNode = { ...baseNode, size: { width: 300, height: 250 }, data: { concatenatedText: '', separator: '\\n' }, inputs: [{ id: 'text-in-0', name: 'Text In 1', type: ConnectorType.Text }], outputs: [{ id: 'text-out', name: 'Text Out', type: ConnectorType.Text }] }; break;
+      case NodeType.Storyboard: newNode = { ...baseNode, size: { width: 750, height: 1100 }, position: { x: x - 375, y: y - 550 }, data: { isLoading: false, aspectRatio: '16:9', scenes: Array.from({ length: 5 }, (_, i) => ({ id: `scene-${i + 1}`, koreanDescription: ``, englishPrompt: '', imageUrl: null, isLoading: false, })) }, inputs: [ { id: 'image-in', name: 'Image In', type: ConnectorType.Image }, { id: 'prompt-in', name: 'Prompt In', type: ConnectorType.Text } ], outputs: [ ...Array.from({ length: 5 }, (_, i) => ({ id: `image-out-${i+1}`, name: `Image Out ${i+1}`, type: ConnectorType.Image })), ...Array.from({ length: 5 }, (_, i) => ({ id: `prompt-out-${i+1}`, name: `Prompt Out ${i+1}`, type: ConnectorType.Text })) ] }; break;
+      case NodeType.Script: newNode = { ...baseNode, size: { width: 800, height: 1200 }, position: { x: x - 400, y: y - 450 }, data: { url: '', description: '', videoInputUrl: '', videoFrames: [], capturedImages: [], productImages: [], modelImages: [], isLoading: false, isCapturing: false, loadingMessage: '분석 시작', isAnalyzed: false, selectedScriptStyle: '1-1', scriptData: null, finalPrompt: null, sceneConcepts: null, aspectRatio: '16:9', videoDuration: '15s', }, inputs: [], outputs: [{ id: 'prompt-out', name: 'Final Prompt', type: ConnectorType.Text }] }; break;
+      case NodeType.Composite: newNode = { ...baseNode, size: { width: 400, height: 500 }, data: { layers: [], outputImageUrl: null, isLoading: false, internalPanZoom: { x: 0, y: 0, k: 1 } }, inputs: [ { id: 'image-in-0', name: 'Image In 1', type: ConnectorType.Image }, { id: 'image-in-1', name: 'Image In 2', type: ConnectorType.Image }, ], outputs: [{ id: 'image-out', name: 'Image Out', type: ConnectorType.Image }] }; break;
+      case NodeType.Stitch: newNode = { ...baseNode, size: { width: 400, height: 500 }, data: { inputImageUrls: [], outputImageUrl: null, isLoading: false, direction: 'horizontal' }, inputs: [ { id: 'image-in-0', name: 'Image In 1', type: ConnectorType.Image }, { id: 'image-in-1', name: 'Image In 2', type: ConnectorType.Image }, ], outputs: [{ id: 'image-out', name: 'Image Out', type: ConnectorType.Image }] }; break;
+      case NodeType.RMBG: newNode = { ...baseNode, size: { width: 400, height: 400 }, data: { inputImageUrl: null, outputImageUrl: null, isLoading: false, backgroundColor: RMBG_DEFAULT_BACKGROUND_COLOR }, inputs: [{ id: 'image-in', name: 'Image In', type: ConnectorType.Image }], outputs: [{ id: 'image-out', name: 'Image Out', type: ConnectorType.Image }], }; break;
+      case NodeType.GridShot: newNode = { ...baseNode, size: { width: 450, height: 600 }, data: { prompt: '', gridSize: '7x6', outputImageUrl: null, outputVideoUrl: null, isLoading: false, loadingMessage: '' }, inputs: [{ id: 'text-in-0', name: 'Prompt In', type: ConnectorType.Text }, { id: 'image-in', name: 'Subject Ref', type: ConnectorType.Image }], outputs: [{ id: 'image-out', name: 'Grid Image', type: ConnectorType.Image }, { id: 'video-out', name: 'Connect Video', type: ConnectorType.Video }] }; break;
+      case NodeType.GridExtractor: newNode = { ...baseNode, size: { width: 450, height: 650 }, data: { inputImageUrl: null, extractedItems: [], isLoading: false, loadingMessage: '' }, inputs: [{ id: 'image-in', name: 'Grid Image In', type: ConnectorType.Image }], outputs: [{ id: 'image-list-out', name: 'Image List', type: ConnectorType.Array }] }; break;
+      case NodeType.SelectImage: newNode = { ...baseNode, size: { width: 300, height: 350 }, data: { index: 0, outputUrl: null, imageList: [] }, inputs: [{ id: 'image-list-in', name: 'Image List In', type: ConnectorType.Array }], outputs: [{ id: 'image-out', name: 'Image Out', type: ConnectorType.Image }] }; break;
+      case NodeType.ImageModify: newNode = { ...baseNode, size: { width: 600, height: 750 }, data: { inputImageUrl: null, outputImageUrl: null, markupDataUrl: null, isLoading: false, loadingMessage: '', prompt: '', internalPanZoom: { x: 0, y: 0, k: 1 }, activeTool: 'brush' }, inputs: [{ id: 'text-in-0', name: 'Instruction', type: ConnectorType.Text }, { id: 'image-in', name: 'Image In', type: ConnectorType.Image }], outputs: [{ id: 'image-out', name: 'Modified Out', type: ConnectorType.Image }] }; break;
+      case NodeType.OutfitDetail: newNode = { ...baseNode, size: { width: 600, height: 450 }, data: { inputImageUrl: null, technicalSpec: '', isLoading: false }, inputs: [{ id: 'image-in', name: 'Image In', type: ConnectorType.Image }], outputs: [{ id: 'text-out', name: 'Spec Out', type: ConnectorType.Text }] }; break;
+      case NodeType.Group: newNode = { ...baseNode, size: { width: 500, height: 400 }, data: { title: 'Group' }, inputs: [], outputs: [], }; break;
+      default: console.error(`Unknown node type: ${type}`); return;
     }
-    if (type === NodeType.Vton) {
-      (newNode.data as unknown as { pose: typeof POSE_PRESETS[0] }).pose = POSE_PRESETS[0];
-    }
-
     setNodes(draft => { draft[id] = newNode; });
     setNodeRenderOrder(draft => { if (type === NodeType.Group) { draft.unshift(id); } else { draft.push(id); } });
-  }, [getWorldPosition, setNodes, setNodeRenderOrder]);
+  };
 
-  // deleteNode: useNodes 훅의 deleteNodes 래퍼 (단일 노드 삭제)
   const deleteNode = useCallback((id: string) => {
-    deleteNodes([id]);
-  }, [deleteNodes]);
+    setNodes(draft => { delete draft[id]; });
+    setConnections(draft => draft.filter(c => c.fromNodeId !== id && c.toNodeId !== id));
+    setNodeRenderOrder(draft => draft.filter(nodeId => nodeId !== id));
+  }, [setNodes, setConnections, setNodeRenderOrder]);
 
-  // copyNode: useNodes 훅의 duplicateNode 래퍼
   const copyNode = useCallback((id: string) => {
-    hookDuplicateNode(id);
-  }, [hookDuplicateNode]);
+    const originalNode = nodes[id];
+    if (!originalNode) return;
+    const newId = `${originalNode.type}-${Date.now()}`;
+    const newNode: Node = { ...originalNode, id: newId, position: { x: originalNode.position.x + 20, y: originalNode.position.y + 20 }, isBypassed: false };
+    setNodes(draft => { draft[newId] = newNode; });
+    setNodeRenderOrder(draft => { if (newNode.type === NodeType.Group) { draft.unshift(newId); } else { draft.push(newId); } });
+  }, [nodes, setNodes, setNodeRenderOrder]);
 
   const handleNodeDrag = (e: DraggableEvent, data: any, draggedNodeId: string) => {
     const deltaX = data.deltaX / panZoom.k;
@@ -1591,36 +1604,78 @@ const App: React.FC = () => {
         });
         setNodes(draft => { newStationaryNodes.forEach(n => { draft[n.id] = n; }); });
         setNodeRenderOrder(draft => { newStationaryNodes.forEach(n => { if (n.type === NodeType.Group) draft.unshift(n.id); else draft.unshift(n.id); }); });
-        const extraConnections: Connection[] = [];
-        const updatedConnections = connections.map(conn => {
-            const srcMoving = effectiveIds.includes(conn.fromNodeId);
-            const tgtMoving = effectiveIds.includes(conn.toNodeId);
-            if (srcMoving && !tgtMoving) { return { ...conn, fromNodeId: stationaryMap[conn.fromNodeId] }; }
-            else if (!srcMoving && tgtMoving) { return { ...conn, toNodeId: stationaryMap[conn.toNodeId] }; }
-            else if (srcMoving && tgtMoving) { extraConnections.push({ ...conn, id: generateId('conn'), fromNodeId: stationaryMap[conn.fromNodeId], toNodeId: stationaryMap[conn.toNodeId] }); return conn; }
-            return conn;
+        setConnections(draft => {
+            const newConnections: Connection[] = [];
+            connections.forEach(conn => {
+                const srcMoving = effectiveIds.includes(conn.fromNodeId);
+                const tgtMoving = effectiveIds.includes(conn.toNodeId);
+                if (srcMoving && !tgtMoving) { const draftConn = draft.find(c => c.id === conn.id); if (draftConn) draftConn.fromNodeId = stationaryMap[conn.fromNodeId]; }
+                else if (!srcMoving && tgtMoving) { const draftConn = draft.find(c => c.id === conn.id); if (draftConn) draftConn.toNodeId = stationaryMap[conn.toNodeId]; }
+                else if (srcMoving && tgtMoving) { newConnections.push({ ...conn, id: generateId('conn'), fromNodeId: stationaryMap[conn.fromNodeId], toNodeId: stationaryMap[conn.toNodeId] }); }
+            });
+            draft.push(...newConnections);
         });
-        loadConnections([...updatedConnections, ...extraConnections]);
     }
   };
 
-  // updateNodeSize: useNodes 훅의 resizeNode 래퍼 (최소 크기 적용 없이 직접 설정)
-  // @MX:NOTE: 컴포넌트에서 전달되는 newSize는 이미 최소 크기가 적용된 값
   const updateNodeSize = useCallback((id: string, newSize: {width: number, height: number}) => {
     setNodes(draft => { if(draft[id]) { draft[id].size = newSize; } });
   }, [setNodes]);
 
-  // handleToggleBypass, handleToggleCollapse는 useNodes 훅에서 제공됨 (SPEC-UI-001 M2)
+  const handleToggleBypass = useCallback((id: string) => {
+    setNodes(draft => {
+        const node = draft[id];
+        if (node) {
+            const newBypassState = !node.isBypassed;
+            node.isBypassed = newBypassState;
+            if (node.type === NodeType.Group) {
+                Object.keys(draft).forEach(key => {
+                    const otherNode = draft[key];
+                    if (otherNode.id !== id && isNodeInsideGroup(otherNode as unknown as Node, node as unknown as Node)) { otherNode.isBypassed = newBypassState; }
+                });
+            }
+        }
+    });
+  }, [setNodes]);
+
+  const handleToggleCollapse = useCallback((id: string) => {
+    setNodes(draft => {
+        const node = draft[id];
+        if (node) {
+            if (node.type === NodeType.Group) {
+                const groupData = node.data as GroupNodeData;
+                if (node.isCollapsed) {
+                    node.isCollapsed = false;
+                    if (node.expandedSize) { node.size = node.expandedSize; }
+                    delete node.expandedSize;
+                    if (groupData.containedNodeIds) { groupData.containedNodeIds.forEach(childId => { if (draft[childId]) { draft[childId].hidden = false; } }); groupData.containedNodeIds = []; }
+                } else {
+                    node.isCollapsed = true; node.expandedSize = node.size; node.size = { width: 200, height: 60 };
+                    const containedIds: string[] = [];
+                    Object.keys(draft).forEach(key => {
+                        const otherNode = draft[key];
+                        if (otherNode.id !== id && !otherNode.hidden && isNodeInsideGroup(otherNode as unknown as Node, node as unknown as Node)) { otherNode.hidden = true; containedIds.push(otherNode.id); }
+                    });
+                    groupData.containedNodeIds = containedIds;
+                }
+            } else {
+                if (node.isCollapsed) { node.isCollapsed = false; if (node.expandedSize) { node.size = node.expandedSize; } delete node.expandedSize; }
+                else { node.isCollapsed = true; node.expandedSize = node.size; node.size = { width: 200, height: 40 }; }
+            }
+        }
+    });
+  }, [setNodes]);
 
   const handleWindowSelectionMove = useCallback((e: MouseEvent) => {
       if (activeTool !== 'select' || !selectionStartPoint.current || !svgRef.current) return;
       const svgBounds = svgRef.current.getBoundingClientRect();
-      const [movedX, movedY] = getWorldPosition(e.clientX - svgBounds.left, e.clientY - svgBounds.top);
+      const currentTransform = d3.zoomTransform(svgRef.current);
+      const [movedX, movedY] = currentTransform.invert([e.clientX - svgBounds.left, e.clientY - svgBounds.top]);
       setSelectionBox({
           x: Math.min(selectionStartPoint.current.x, movedX), y: Math.min(selectionStartPoint.current.y, movedY),
           width: Math.abs(selectionStartPoint.current.x - movedX), height: Math.abs(selectionStartPoint.current.y - movedY),
       });
-  }, [activeTool, getWorldPosition]);
+  }, [activeTool]);
 
   const handleWindowSelectionUp = useCallback((e: MouseEvent) => {
       if (activeTool !== 'select' || !selectionStartPoint.current || !svgRef.current) {
@@ -1629,7 +1684,8 @@ const App: React.FC = () => {
            return;
       }
       const svgBounds = svgRef.current.getBoundingClientRect();
-      const [movedX, movedY] = getWorldPosition(e.clientX - svgBounds.left, e.clientY - svgBounds.top);
+      const currentTransform = d3.zoomTransform(svgRef.current);
+      const [movedX, movedY] = currentTransform.invert([e.clientX - svgBounds.left, e.clientY - svgBounds.top]);
       const finalBox = {
           x: Math.min(selectionStartPoint.current.x, movedX), y: Math.min(selectionStartPoint.current.y, movedY),
           width: Math.abs(selectionStartPoint.current.x - movedX), height: Math.abs(selectionStartPoint.current.y - movedY),
@@ -1658,7 +1714,7 @@ const App: React.FC = () => {
       setSelectionBox(null); selectionStartPoint.current = null;
       window.removeEventListener('mousemove', handleWindowSelectionMove);
       window.removeEventListener('mouseup', handleWindowSelectionUp);
-  }, [activeTool, handleWindowSelectionMove, setNodeRenderOrder, getWorldPosition]);
+  }, [activeTool, handleWindowSelectionMove, setNodeRenderOrder]);
 
   const handleSvgMouseUp = (e: React.MouseEvent) => {
       const targetEl = e.target as Element;
@@ -1667,7 +1723,8 @@ const App: React.FC = () => {
             let x = e.clientX; let y = e.clientY;
             if (svgRef.current) {
                 const svgBounds = svgRef.current.getBoundingClientRect();
-                const [worldX, worldY] = getWorldPosition(e.clientX - svgBounds.left, e.clientY - svgBounds.top);
+                const currentTransform = d3.zoomTransform(svgRef.current);
+                const [worldX, worldY] = currentTransform.invert([e.clientX - svgBounds.left, e.clientY - svgBounds.top]);
                 x = worldX; y = worldY;
             }
             const id = `${NodeType.Comment}-${Date.now()}`;
@@ -1684,12 +1741,13 @@ const App: React.FC = () => {
     if (activeTool === 'select') {
         if (!svgRef.current) return;
         const svgBounds = svgRef.current.getBoundingClientRect();
-        const [worldX, worldY] = getWorldPosition(e.clientX - svgBounds.left, e.clientY - svgBounds.top);
+        const currentTransform = d3.zoomTransform(svgRef.current);
+        const [worldX, worldY] = currentTransform.invert([e.clientX - svgBounds.left, e.clientY - svgBounds.top]);
         selectionStartPoint.current = { x: worldX, y: worldY }; setSelectionBox({ x: worldX, y: worldY, width: 0, height: 0 });
         window.addEventListener('mousemove', handleWindowSelectionMove);
         window.addEventListener('mouseup', handleWindowSelectionUp);
     }
-    setSelectedNodeIds([]); selectedNodeIdsRef.current = []; selectConnection(undefined);
+    setSelectedNodeIds([]); selectedNodeIdsRef.current = []; setSelectedConnectionId(null);
   };
   
   const handleSvgMouseMove = (e: React.MouseEvent) => {};
@@ -1714,113 +1772,115 @@ const App: React.FC = () => {
       if (hasUpdates) { setNodes(draft => { Object.keys(workingNodes).forEach(id => { if (draft[id]) { if (visited.has(id) || Object.values(workingNodes).some(n => n.id === id)) { draft[id] = workingNodes[id]; } } }); }); }
   };
 
-  // startConnection: useConnections 훅 래퍼 - SVG path ref를 초기화하고 드래그 시작
   const startConnection = (fromNodeId: string, fromConnector: Connector, e: React.MouseEvent) => {
-    if (pendingConnectionPathRef.current && svgRef.current) {
-      const svgBounds = svgRef.current.getBoundingClientRect();
-      const [worldX, worldY] = getWorldPosition(e.clientX - svgBounds.left, e.clientY - svgBounds.top);
-      const fromPoint = getConnectorPosition(fromNodeId, fromConnector.id, false);
-      const toPoint = { x: worldX, y: worldY };
-      const pathData = `M ${fromPoint.x} ${fromPoint.y} C ${fromPoint.x + 75} ${fromPoint.y}, ${toPoint.x - 75} ${toPoint.y}, ${toPoint.x} ${toPoint.y}`;
-      pendingConnectionPathRef.current.setAttribute('d', pathData);
-      const color = ({ [ConnectorType.Text]: '#38bdf8', [ConnectorType.Image]: '#d946ef', [ConnectorType.Video]: '#f59e0b', [ConnectorType.Array]: '#22c55e', }[fromConnector.type] || '#6B7280');
-      pendingConnectionPathRef.current.setAttribute('stroke', color);
-      pendingConnectionPathRef.current.style.display = 'block';
+      setPendingConnection({ fromNodeId, fromConnector });
+      if (pendingConnectionPathRef.current && svgRef.current) {
+        const svgBounds = svgRef.current.getBoundingClientRect();
+        const currentTransform = d3.zoomTransform(svgRef.current);
+        const [worldX, worldY] = currentTransform.invert([e.clientX - svgBounds.left, e.clientY - svgBounds.top]);
+        const fromPoint = getConnectorPosition(fromNodeId, fromConnector.id, false);
+        const toPoint = { x: worldX, y: worldY }; 
+        const pathData = `M ${fromPoint.x} ${fromPoint.y} C ${fromPoint.x + 75} ${fromPoint.y}, ${toPoint.x - 75} ${toPoint.y}, ${toPoint.x} ${toPoint.y}`;
+        pendingConnectionPathRef.current.setAttribute('d', pathData);
+        const color = ({ [ConnectorType.Text]: '#38bdf8', [ConnectorType.Image]: '#d946ef', [ConnectorType.Video]: '#f59e0b', [ConnectorType.Array]: '#22c55e', }[fromConnector.type] || '#6B7280');
+        pendingConnectionPathRef.current.setAttribute('stroke', color);
+        pendingConnectionPathRef.current.style.display = 'block';
+      }
+  };
+
+  const endConnection = (toNodeId: string, toConnector: Connector) => {
+    if (pendingConnection) {
+        if (pendingConnection.fromNodeId === toNodeId) { setPendingConnection(undefined); return; }
+        const fromNode = nodes[pendingConnection.fromNodeId]; const toNode = nodes[toNodeId];
+        if (!fromNode || !toNode) { setPendingConnection(undefined); return; }
+        const isFromOutput = fromNode.outputs.some(c => c.id === pendingConnection.fromConnector.id);
+        const isToInput = toNode.inputs.some(c => c.id === toConnector.id);
+        if(isFromOutput && isToInput && pendingConnection.fromConnector.type === toConnector.type) {
+            const newConnection: Connection = { id: `conn-${Date.now()}`, fromNodeId: pendingConnection.fromNodeId, fromConnectorId: pendingConnection.fromConnector.id, toNodeId, toConnectorId: toConnector.id, };
+            let connectionAdded = false;
+            const canConnect = () => {
+                const exists = connections.some(c => c.fromNodeId === newConnection.fromNodeId && c.fromConnectorId === newConnection.fromConnectorId && c.toNodeId === newConnection.toNodeId && c.toConnectorId === newConnection.toConnectorId);
+                if (exists) return false;
+                const isImageInput = toConnector.type === ConnectorType.Image; const isListInput = toNode.type === NodeType.List; 
+                const isDynamicImageNode = toNode.type === NodeType.Composite || toNode.type === NodeType.Stitch || toNode.type === NodeType.RMBG || toNode.type === NodeType.Assistant || toNode.type === NodeType.GridShot || toNode.type === NodeType.ImageModify;
+                const isReferenceInput = (toNode.type === NodeType.Video && toConnector.id === 'reference-image-in') || (['Assistant', 'Image', 'ImagePreview', 'ImageEdit', 'GridShot', 'ImageModify'].includes(toNode.type) && (toConnector.id === 'reference-in' || toConnector.id === 'image-in'));
+                const isVideoInput = toConnector.type === ConnectorType.Video;
+                const isArrayInput = toConnector.type === ConnectorType.Array;
+                const inputInUse = !isImageInput && !isListInput && !isDynamicImageNode && !isReferenceInput && !isVideoInput && !isArrayInput && connections.some(c => c.toNodeId === toNodeId && c.toConnectorId === toConnector.id);
+                return !inputInUse;
+            };
+            if (canConnect()) {
+                connectionAdded = true; setConnections(draft => { draft.push(newConnection); });
+                const immediateNodeTypes = [NodeType.Array, NodeType.List, NodeType.PromptConcatenator, NodeType.Composite, NodeType.Stitch, NodeType.RMBG, NodeType.VideoStitch, NodeType.SelectImage];
+                if (immediateNodeTypes.includes(toNode.type)) {
+                    const updatedConnections = [...connections, newConnection];
+                    executeNode(toNodeId, nodes, updatedConnections, (msg) => onVideoProgress(toNodeId, msg), onAssetGenerated)
+                        .then(result => {
+                             setNodes(draft => { if(draft[toNodeId]) { Object.assign(draft[toNodeId], result); if (result.data) { draft[toNodeId].data = { ...draft[toNodeId].data, ...result.data }; } } });
+                             const nextNodes = { ...nodes, [toNodeId]: { ...toNode, ...result, data: { ...toNode.data, ...result.data } } };
+                             propagateImmediateUpdates([toNodeId], nextNodes, updatedConnections);
+                        });
+                }
+            }
+            if (connectionAdded) {
+                const targetTextNodeTypes = [NodeType.Assistant, NodeType.Image, NodeType.ImagePreview, NodeType.ImageEdit, NodeType.Video, NodeType.PromptConcatenator, NodeType.GridShot, NodeType.ImageModify];
+                if (targetTextNodeTypes.includes(toNode.type) && toConnector.type === ConnectorType.Text) {
+                    const textInputs = toNode.inputs.filter(c => c.type === ConnectorType.Text);
+                    const connectedTextInputIds = new Set<string>();
+                    connections.forEach(c => { if (c.toNodeId === toNodeId && toNode.inputs.some(input => input.id === c.toConnectorId && input.type === ConnectorType.Text)) { connectedTextInputIds.add(c.toConnectorId); } });
+                    connectedTextInputIds.add(toConnector.id);
+                    if (textInputs.length === connectedTextInputIds.size) {
+                        setNodes(draft => {
+                            const nodeToUpdate = draft[toNodeId];
+                            if (nodeToUpdate) {
+                                const currentTextInputs = nodeToUpdate.inputs.filter(c => c.type === ConnectorType.Text);
+                                const newIndex = currentTextInputs.length;
+                                const baseName = nodeToUpdate.type === NodeType.Assistant ? 'Text In' : 'Text(Prompt) In';
+                                const newConnector: Connector = { id: `text-in-${newIndex}`, name: `${baseName} ${newIndex + 1}`, type: ConnectorType.Text };
+                                const lastTextIndex = [...nodeToUpdate.inputs].reverse().findIndex(c => c.type === ConnectorType.Text);
+                                const actualLastTextIndex = lastTextIndex === -1 ? -1 : nodeToUpdate.inputs.length - 1 - lastTextIndex;
+                                if (actualLastTextIndex !== -1) {
+                                    nodeToUpdate.inputs.splice(actualLastTextIndex + 1, 0, newConnector);
+                                } else {
+                                    nodeToUpdate.inputs.push(newConnector);
+                                }
+                            }
+                        });
+                    }
+                } else if ([NodeType.Composite, NodeType.Stitch, NodeType.RMBG, NodeType.Assistant, NodeType.ImageModify].includes(toNode.type) && toConnector.type === ConnectorType.Image) {
+                    const imageInputs = toNode.inputs.filter(c => c.type === ConnectorType.Image);
+                    const connectedImageInputIds = new Set<string>();
+                    connections.forEach(c => { if (c.toNodeId === toNodeId && toNode.inputs.some(input => input.id === c.toConnectorId && input.type === ConnectorType.Image)) { connectedImageInputIds.add(c.toConnectorId); } });
+                    connectedImageInputIds.add(toConnector.id);
+                    if (imageInputs.length === connectedImageInputIds.size) {
+                        setNodes(draft => {
+                            const nodeToUpdate = draft[toNodeId];
+                            if (nodeToUpdate) {
+                                const currentImageInputs = nodeToUpdate.inputs.filter(c => c.type === ConnectorType.Image);
+                                const newIndex = currentImageInputs.length;
+                                const newConnector: Connector = { id: `image-in-${newIndex}`, name: `Image In ${newIndex + 1}`, type: ConnectorType.Image };
+                                const lastImageIndex = [...nodeToUpdate.inputs].reverse().findIndex(c => c.type === ConnectorType.Image);
+                                const actualLastImageIndex = lastImageIndex === -1 ? -1 : nodeToUpdate.inputs.length - 1 - lastImageIndex;
+                                if (actualLastImageIndex !== -1) {
+                                    nodeToUpdate.inputs.splice(actualLastImageIndex + 1, 0, newConnector);
+                                } else {
+                                    nodeToUpdate.inputs.push(newConnector);
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+        }
     }
-    const svgBounds = svgRef.current?.getBoundingClientRect();
-    const screenX = svgBounds ? e.clientX - svgBounds.left : e.clientX;
-    const screenY = svgBounds ? e.clientY - svgBounds.top : e.clientY;
-    hookStartConnection(fromNodeId, fromConnector, screenX, screenY);
-  };
-
-  // endConnection: useConnections 훅의 completeConnection 래퍼
-  // 커넥션 완성 후 동적 커넥터 확장 로직(Text/Image input) 처리
-  const handleEndConnection = (toNodeId: string, toConnector: Connector) => {
-    if (!pendingConnection) return;
-    const fromNodeId = pendingConnection.fromNodeId;
-    const fromConnector = pendingConnection.fromConnector;
-    const fromNode = nodes[fromNodeId];
-    const toNode = nodes[toNodeId];
-
-    // 기존 connection 수 저장 (추가 여부 감지용)
-    const prevCount = connections.length;
-
-    // path 숨기기
     if (pendingConnectionPathRef.current) { pendingConnectionPathRef.current.style.display = 'none'; }
-
-    // useConnections 훅의 completeConnection 호출
-    endConnection(toNodeId, toConnector);
-
-    // 연결 추가 여부 확인 후 즉시 실행 노드 처리 및 동적 커넥터 추가
-    // (completeConnection은 비동기 상태 업데이트이므로 타이머로 next tick에 확인)
-    // @MX:NOTE: 즉시 실행 및 동적 커넥터 확장은 useConnections의 onConnectionsChanged 콜백 대신
-    // 여기서 직접 처리 (executeNode 등 App.tsx 의존 로직이 많아 분리 유지)
-    setTimeout(() => {
-      const newConnections = connectionsStateRef.current;
-      if (newConnections.length <= prevCount) return; // 연결이 추가되지 않은 경우 무시
-      const newConn = newConnections[newConnections.length - 1];
-      if (newConn.toNodeId !== toNodeId) return;
-
-      if (!fromNode || !toNode) return;
-
-      const immediateNodeTypes = [NodeType.Array, NodeType.List, NodeType.PromptConcatenator, NodeType.Composite, NodeType.Stitch, NodeType.RMBG, NodeType.VideoStitch, NodeType.SelectImage];
-      if (immediateNodeTypes.includes(toNode.type)) {
-        executeNode(toNodeId, nodes, newConnections, (msg) => onVideoProgress(toNodeId, msg), onAssetGenerated)
-          .then(result => {
-            setNodes(draft => { if (draft[toNodeId]) { Object.assign(draft[toNodeId], result); if (result.data) { draft[toNodeId].data = { ...draft[toNodeId].data, ...result.data }; } } });
-            const nextNodes = { ...nodes, [toNodeId]: { ...toNode, ...result, data: { ...toNode.data, ...result.data } } };
-            propagateImmediateUpdates([toNodeId], nextNodes, newConnections);
-          });
-      }
-
-      const targetTextNodeTypes = [NodeType.Assistant, NodeType.Image, NodeType.ImagePreview, NodeType.ImageEdit, NodeType.Video, NodeType.PromptConcatenator, NodeType.GridShot, NodeType.ImageModify];
-      if (targetTextNodeTypes.includes(toNode.type) && toConnector.type === ConnectorType.Text) {
-        const textInputs = toNode.inputs.filter(c => c.type === ConnectorType.Text);
-        const connectedTextInputIds = new Set<string>();
-        newConnections.forEach(c => { if (c.toNodeId === toNodeId && toNode.inputs.some(input => input.id === c.toConnectorId && input.type === ConnectorType.Text)) { connectedTextInputIds.add(c.toConnectorId); } });
-        if (textInputs.length === connectedTextInputIds.size) {
-          setNodes(draft => {
-            const nodeToUpdate = draft[toNodeId];
-            if (nodeToUpdate) {
-              const currentTextInputs = nodeToUpdate.inputs.filter(c => c.type === ConnectorType.Text);
-              const newIndex = currentTextInputs.length;
-              const baseName = nodeToUpdate.type === NodeType.Assistant ? 'Text In' : 'Text(Prompt) In';
-              const newConnector: Connector = { id: `text-in-${newIndex}`, name: `${baseName} ${newIndex + 1}`, type: ConnectorType.Text };
-              const lastTextIndex = [...nodeToUpdate.inputs].reverse().findIndex(c => c.type === ConnectorType.Text);
-              const actualLastTextIndex = lastTextIndex === -1 ? -1 : nodeToUpdate.inputs.length - 1 - lastTextIndex;
-              if (actualLastTextIndex !== -1) { nodeToUpdate.inputs.splice(actualLastTextIndex + 1, 0, newConnector); } else { nodeToUpdate.inputs.push(newConnector); }
-            }
-          });
-        }
-      } else if ([NodeType.Composite, NodeType.Stitch, NodeType.RMBG, NodeType.Assistant, NodeType.ImageModify].includes(toNode.type) && toConnector.type === ConnectorType.Image) {
-        const imageInputs = toNode.inputs.filter(c => c.type === ConnectorType.Image);
-        const connectedImageInputIds = new Set<string>();
-        newConnections.forEach(c => { if (c.toNodeId === toNodeId && toNode.inputs.some(input => input.id === c.toConnectorId && input.type === ConnectorType.Image)) { connectedImageInputIds.add(c.toConnectorId); } });
-        if (imageInputs.length === connectedImageInputIds.size) {
-          setNodes(draft => {
-            const nodeToUpdate = draft[toNodeId];
-            if (nodeToUpdate) {
-              const currentImageInputs = nodeToUpdate.inputs.filter(c => c.type === ConnectorType.Image);
-              const newIndex = currentImageInputs.length;
-              const newConnector: Connector = { id: `image-in-${newIndex}`, name: `Image In ${newIndex + 1}`, type: ConnectorType.Image };
-              const lastImageIndex = [...nodeToUpdate.inputs].reverse().findIndex(c => c.type === ConnectorType.Image);
-              const actualLastImageIndex = lastImageIndex === -1 ? -1 : nodeToUpdate.inputs.length - 1 - lastImageIndex;
-              if (actualLastImageIndex !== -1) { nodeToUpdate.inputs.splice(actualLastImageIndex + 1, 0, newConnector); } else { nodeToUpdate.inputs.push(newConnector); }
-            }
-          });
-        }
-      }
-    }, 0);
+    setPendingConnection(undefined);
   };
 
-  // connectionsStateRef: handleEndConnection의 setTimeout에서 최신 connections 접근용
-  const connectionsStateRef = useRef<Connection[]>(connections);
-  connectionsStateRef.current = connections;
-
-  const handleSelectConnection = (id: string) => { selectConnection(id); setSelectedNodeIds([]); selectedNodeIdsRef.current = []; };
+  const handleSelectConnection = (id: string) => { setSelectedConnectionId(id); setSelectedNodeIds([]); selectedNodeIdsRef.current = []; };
 
   const handleSelectNode = useCallback((id: string, e?: React.MouseEvent) => {
-    selectConnection(undefined);
+    setSelectedConnectionId(null);
     const isShiftPressed = e?.shiftKey;
     let finalSelectedIds: string[];
     const currentSelectedIds = selectedNodeIdsRef.current;
@@ -1852,7 +1912,8 @@ const App: React.FC = () => {
         let x = e.clientX; let y = e.clientY;
         if (svgRef.current) {
             const svgBounds = svgRef.current.getBoundingClientRect();
-            const [worldX, worldY] = getWorldPosition(e.clientX - svgBounds.left, e.clientY - svgBounds.top);
+            const currentTransform = d3.zoomTransform(svgRef.current);
+            const [worldX, worldY] = currentTransform.invert([e.clientX - svgBounds.left, e.clientY - svgBounds.top]);
             x = worldX; y = worldY;
         }
         const id = `${NodeType.ImageLoad}-${Date.now()}`;
@@ -1870,7 +1931,7 @@ const App: React.FC = () => {
             try {
                 const content = event.target?.result as string;
                 const project = JSON.parse(content) as Project;
-                if (project.id && project.state) { loadNodes(project.state.nodes, project.state.nodeRenderOrder || Object.keys(project.state.nodes)); loadConnections(project.state.connections); setHistory(project.state.history); restoreTransform(project.state.panZoom); if (project.type === 'Playground') { setIsPlaygroundOpen(true); } }
+                if (project.id && project.state) { setNodes(project.state.nodes); setConnections(project.state.connections); setHistory(project.state.history); setPanZoom(project.state.panZoom); setNodeRenderOrder(project.state.nodeRenderOrder || Object.keys(project.state.nodes)); if (project.type === 'Playground') { setIsPlaygroundOpen(true); } }
             } catch (error) { console.error("Failed to parse dropped JSON project:", error); }
         };
         reader.readAsText(file); return;
@@ -1881,7 +1942,8 @@ const App: React.FC = () => {
     let x = e.clientX; let y = e.clientY;
     if (svgRef.current) {
         const svgBounds = svgRef.current.getBoundingClientRect();
-        const [worldX, worldY] = getWorldPosition(e.clientX - svgBounds.left, e.clientY - svgBounds.top);
+        const currentTransform = d3.zoomTransform(svgRef.current);
+        const [worldX, worldY] = currentTransform.invert([e.clientX - svgBounds.left, e.clientY - svgBounds.top]);
         x = worldX; y = worldY;
     }
 
@@ -1922,70 +1984,73 @@ const App: React.FC = () => {
     return executionOrder;
   };
 
-  // useNodeGeneration: AI 노드 생성 상태 관리 훅 (SPEC-UI-001 M4)
-  // generatingNodeIds, isGenerating, generateForNode, cancelGeneration 제공
-  const {
-    generateForNode: onGenerateNode,
-    generatingNodeIds: generatingNodeIdsFromHook,
-    isGenerating: isNodeGenerating,
-    cancelGeneration,
-  } = useNodeGeneration({
-    nodes,
-    connections,
-    updateNodeData,
-    addToHistory: onAssetGenerated,
-    // executeNodeFn: 실제 노드 실행 로직 (Composite/RMBG/일반 노드 분기 포함)
-    // @MX:NOTE: M4에서는 기존 executeNode 로직을 그대로 래핑하여 안전하게 통합
-    executeNodeFn: useCallback(async (nodeId: string): Promise<Partial<Node>> => {
-      const node = nodesRef.current[nodeId];
-      if (!node) throw new Error(`Node ${nodeId} not found during execution.`);
-      let updatedNodePartial: Partial<Node> = {};
-      if (node.type === NodeType.Composite) {
-          const data = node.data as CompositeNodeData;
-          if (data.layers.length < 2) { alert("Composite node requires at least 2 image layers for compositing."); updatedNodePartial = { data: { ...data, isLoading: false } }; } else {
-              updatedNodePartial = { data: { ...data, loadingMessage: 'Compositing images...' } };
-              const contentAreaWidth = node.size.width - COMPOSITE_NODE_CONTENT_PADDING_X;
-              const contentAreaHeight = node.size.height - COMPOSITE_NODE_HEADER_HEIGHT - COMPOSITE_NODE_CONTENT_PADDING_Y_TOP - COMPOSITE_NODE_CONTENT_PADDING_Y_BOTTOM - COMPOSITE_NODE_BUTTON_HEIGHT - COMPOSITE_NODE_INTERNAL_SPACING;
-              const result = await compositeImages(data.layers, Math.max(1, contentAreaWidth), Math.max(1, contentAreaHeight));
-              if (result) { onAssetGenerated({ type: 'image', url: result }); }
-              updatedNodePartial = { data: { ...data, outputImageUrl: result, isLoading: false } };
-          }
-      } else if (node.type === NodeType.RMBG) {
-          const data = node.data as RMBGNodeData;
-          if (!data.inputImageUrl) { alert("RMBG node requires an image input."); updatedNodePartial = { data: { ...data, isLoading: false } }; } else {
-              updatedNodePartial = { data: { ...data, loadingMessage: 'Removing background...' } };
-              let resultWithWhiteBg = await removeBackground(data.inputImageUrl); let finalResult: string | null = null;
-              if (resultWithWhiteBg) { if (data.backgroundColor !== '#FFFFFF') { finalResult = await addSolidBackground(resultWithWhiteBg, data.backgroundColor); } else { finalResult = resultWithWhiteBg; } }
-              if (finalResult) { onAssetGenerated({ type: 'image', url: finalResult }); }
-              updatedNodePartial = { data: { ...data, outputImageUrl: finalResult, isLoading: false } };
-          }
-      } else {
-          updatedNodePartial = await executeNode(nodeId, nodesRef.current, connections, (msg: string) => updateNodeData(nodeId, { loadingMessage: msg }), onAssetGenerated);
-      }
-      setNodes(draft => { if (draft[nodeId]) { Object.assign(draft[nodeId], updatedNodePartial); if (updatedNodePartial.data) { draft[nodeId].data = { ...draft[nodeId].data, ...updatedNodePartial.data }; } if ('isLoading' in draft[nodeId].data) { (draft[nodeId].data as any).isLoading = false; } } });
-      const nextNodes = { ...nodesRef.current, [nodeId]: { ...nodesRef.current[nodeId], ...updatedNodePartial, data: { ...nodesRef.current[nodeId].data, ...updatedNodePartial.data } } } as Record<string, Node>;
-      propagateImmediateUpdates([nodeId], nextNodes, connections);
-      return updatedNodePartial;
-    }, [connections, updateNodeData, onAssetGenerated, setNodes, executeNode]),
-  });
+  const onGenerateNode = useCallback(async (nodeId: string) => {
+    const node = nodesRef.current[nodeId]; if (!node || node.isBypassed) return;
+    setNodes(draft => { if(draft[nodeId] && 'isLoading' in draft[nodeId].data) { (draft[nodeId].data as any).isLoading = true; } });
+    try {
+        let updatedNodePartial: Partial<Node> = {};
+        if (node.type === NodeType.Composite) {
+            const data = node.data as CompositeNodeData;
+            if (data.layers.length < 2) { alert("Composite node requires at least 2 image layers for compositing."); updatedNodePartial = { data: { ...data, isLoading: false } }; } else {
+                updatedNodePartial = { data: { ...data, loadingMessage: 'Compositing images...' } };
+                const contentAreaWidth = node.size.width - COMPOSITE_NODE_CONTENT_PADDING_X;
+                const contentAreaHeight = node.size.height - COMPOSITE_NODE_HEADER_HEIGHT - COMPOSITE_NODE_CONTENT_PADDING_Y_TOP - COMPOSITE_NODE_CONTENT_PADDING_Y_BOTTOM - COMPOSITE_NODE_BUTTON_HEIGHT - COMPOSITE_NODE_INTERNAL_SPACING;
+                const result = await compositeImages(data.layers, Math.max(1, contentAreaWidth), Math.max(1, contentAreaHeight));
+                if (result) { onAssetGenerated({ type: 'image', url: result }); }
+                updatedNodePartial = { data: { ...data, outputImageUrl: result, isLoading: false } };
+            }
+        } else if (node.type === NodeType.RMBG) {
+            const data = node.data as RMBGNodeData;
+            if (!data.inputImageUrl) { alert("RMBG node requires an image input."); updatedNodePartial = { data: { ...data, isLoading: false } }; } else {
+                updatedNodePartial = { data: { ...data, loadingMessage: 'Removing background...' } };
+                let resultWithWhiteBg = await removeBackground(data.inputImageUrl); let finalResult: string | null = null;
+                if (resultWithWhiteBg) { if (data.backgroundColor !== '#FFFFFF') { finalResult = await addSolidBackground(resultWithWhiteBg, data.backgroundColor); } else { finalResult = resultWithWhiteBg; } }
+                if (finalResult) { onAssetGenerated({ type: 'image', url: finalResult }); }
+                updatedNodePartial = { data: { ...data, outputImageUrl: finalResult, isLoading: false } };
+            }
+        } else {
+            updatedNodePartial = await executeNode(nodeId, nodesRef.current, connections, (msg: string) => updateNodeData(nodeId, { loadingMessage: msg }), onAssetGenerated);
+        }
+        setNodes(draft => { if (draft[nodeId]) { Object.assign(draft[nodeId], updatedNodePartial); if (updatedNodePartial.data) { draft[nodeId].data = { ...draft[nodeId].data, ...updatedNodePartial.data }; } if ('isLoading' in draft[nodeId].data) { (draft[nodeId].data as any).isLoading = false; } } });
+        const nextNodes = { ...nodesRef.current, [nodeId]: { ...nodesRef.current[nodeId], ...updatedNodePartial, data: { ...nodesRef.current[nodeId].data, ...updatedNodePartial.data } } } as Record<string, Node>;
+        propagateImmediateUpdates([nodeId], nextNodes, connections);
+    } catch (error) {
+        console.error(`Error executing node ${nodeId}:`, error);
+        setNodes(draft => { if(draft[nodeId] && 'isLoading' in draft[nodeId].data) { (draft[nodeId].data as any).isLoading = false; } if(draft[nodeId]) { (draft[nodeId].data as any).loadingMessage = `Error: ${error instanceof Error ? error.message : 'Unknown error'}`; } });
+    }
+  }, [nodes, connections, updateNodeData, onAssetGenerated, setNodes, executeNode]);
 
-  // handleSaveProject: useProjectManager.saveProject 위임 (SPEC-UI-001 M5)
   const handleSaveProject = async (name: string) => {
     setIsSaving(true);
-    await pmSaveProject(name);
+    const newProject: Project = {
+      id: `proj-${Date.now()}`,
+      name,
+      createdAt: new Date().toISOString(),
+      state: { nodes, connections, history, panZoom, nodeRenderOrder }
+    };
+    const updated = [...projects, newProject];
+    setProjects(updated);
+    await saveProjectsToStorage(updated);
     setIsSaving(false);
     setIsSaveModalOpen(false);
   };
 
-  // handleLoadProject: useProjectManager.loadProject 위임 (SPEC-UI-001 M5)
   const handleLoadProject = (id: string) => {
-    pmLoadProject(id);
-    setIsLoadModalOpen(false);
+    const project = projects.find(p => p.id === id);
+    if (project) {
+      setNodes(project.state.nodes);
+      setConnections(project.state.connections);
+      setHistory(project.state.history);
+      setPanZoom(project.state.panZoom);
+      setNodeRenderOrder(project.state.nodeRenderOrder || Object.keys(project.state.nodes));
+      setIsLoadModalOpen(false);
+    }
   };
 
-  // handleDeleteProject: useProjectManager.deleteProject 위임 (SPEC-UI-001 M5)
   const handleDeleteProject = async (id: string) => {
-    await pmDeleteProject(id);
+    const updated = projects.filter(p => p.id !== id);
+    setProjects(updated);
+    await saveProjectsToStorage(updated);
   };
 
   const handleExportProject = (id: string) => {
@@ -2000,18 +2065,19 @@ const App: React.FC = () => {
     }
   };
 
-  // handleImportProject: 프로젝트 JSON 파일 가져오기 — 캔버스에 상태 복원 (SPEC-UI-001 M5)
   const handleImportProject = async (project: Project) => {
     if (project && project.state) {
-      loadNodes(project.state.nodes, project.state.nodeRenderOrder || Object.keys(project.state.nodes));
-      loadConnections(project.state.connections);
+      setNodes(project.state.nodes);
+      setConnections(project.state.connections);
       setHistory(project.state.history);
-      restoreTransform(project.state.panZoom);
-
-      // 가져온 프로젝트를 목록에 추가 (직접 IndexedDB 저장)
+      setPanZoom(project.state.panZoom);
+      setNodeRenderOrder(project.state.nodeRenderOrder || Object.keys(project.state.nodes));
+      
+      // Also add to projects list if it doesn't exist
       if (!projects.find(p => p.id === project.id)) {
           const updated = [...projects, project];
-          try { await saveProjectsList(updated); } catch (e) { console.error('프로젝트 가져오기 저장 실패:', e); }
+          setProjects(updated);
+          await saveProjectsToStorage(updated);
       }
     }
   };
@@ -2047,7 +2113,7 @@ const App: React.FC = () => {
                 if ('isLoading' in updatedNode.data) { (updatedNode.data as any).isLoading = false; }
                 currentNodesState = { ...currentNodesState, [nodeId]: updatedNode };
                 setNodes(draft => { if (draft[nodeId]) { Object.assign(draft[nodeId], updatedNode); } });
-            } catch (error) { console.error(`Error executing node ${nodeId}:`, error); setNodes(draft => { if (draft[nodeId]) { if ('isLoading' in draft[nodeId].data) { (draft[nodeId].data as any).isLoading = false; } if ('loadingMessage' in draft[nodeId].data) { (draft[nodeId].data as any).loadingMessage = `Error: ${error instanceof Error ? error.message : 'Unknown error'}`; } } }); break; }
+            } catch (error) { console.error(`Error executing node ${nodeId}:`, error); setNodes(draft => { if (draft[nodeId]) { if ('isLoading' in draft[nodeId].data) { (draft[nodeId].data as any).isLoading = false; } (draft[nodeId].data as any).loadingMessage = `Error: ${error instanceof Error ? error.message : 'Unknown error'}`; } }); break; }
         }
     }
     setIsGeneratingAll(false);
@@ -2078,7 +2144,7 @@ const App: React.FC = () => {
                   onSizeChange={updateNodeSize}
                   onDataChange={updateNodeData}
                   onStartConnection={(fromNodeId, fromConnector, e) => startConnection(fromNodeId, fromConnector, e)}
-                  onEndConnection={handleEndConnection}
+                  onEndConnection={endConnection}
                   onDeleteNode={deleteNode}
                   onCopyNode={copyNode}
                   onGenerateNode={onGenerateNode}
@@ -2119,7 +2185,7 @@ const App: React.FC = () => {
                   onSizeChange={updateNodeSize}
                   onDataChange={updateNodeData}
                   onStartConnection={(fromNodeId, fromConnector, e) => startConnection(fromNodeId, fromConnector, e)}
-                  onEndConnection={handleEndConnection}
+                  onEndConnection={endConnection}
                   onDeleteNode={deleteNode}
                   onCopyNode={copyNode}
                   onGenerateNode={onGenerateNode}
@@ -2137,13 +2203,22 @@ const App: React.FC = () => {
         
         <Toolbar onAddNode={addNode} isGenerating={isGeneratingAll} onOpenPlayground={() => setIsPlaygroundOpen(true)} />
         <ToolsPanel activeTool={activeTool} setActiveTool={setActiveTool} />
-        <ZoomControls
-          zoomLevel={panZoom.k}
-          onZoomIn={zoomIn}
-          onZoomOut={zoomOut}
-          onZoomToFit={() => zoomToFit(Object.values(nodes))}
-        />
-        <button onClick={executeGraph} disabled={isGeneratingAll} className="absolute top-4 right-4 z-10 flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl shadow-2xl text-white font-bold transition-all duration-200 ease-in-out disabled:bg-gray-600 disabled:cursor-not-allowed"> {isGeneratingAll ? ( <> <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> <span>Generating...</span> </> ) : ( <> <PlayIcon className="w-6 h-6" /> <span>Generate All</span> </> )} </button>
+        
+        <div className="absolute top-4 right-4 z-10 flex items-center gap-3">
+          <button 
+            onClick={executeGraph} 
+            disabled={isGeneratingAll} 
+            className="flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl shadow-2xl text-white font-bold transition-all duration-200 ease-in-out disabled:bg-gray-600 disabled:cursor-not-allowed"
+          > 
+            {isGeneratingAll ? ( 
+              <> <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> <span>Generating...</span> </> 
+            ) : ( 
+              <> <PlayIcon className="w-6 h-6" /> <span>Generate All</span> </> 
+            )} 
+          </button>
+        </div>
+
+        <ZoomControls zoomLevel={panZoom.k} onZoomIn={() => zoomBehaviorRef.current && d3.select(svgRef.current).transition().call(zoomBehaviorRef.current.scaleBy, 1.2)} onZoomOut={() => zoomBehaviorRef.current && d3.select(svgRef.current).transition().call(zoomBehaviorRef.current.scaleBy, 0.8)} onZoomToFit={() => { if (!zoomBehaviorRef.current || !svgRef.current || Object.keys(nodes).length === 0) return; const svg = d3.select(svgRef.current); const parent = svg.node()?.parentElement; if (!parent) return; const { width, height } = parent.getBoundingClientRect(); const visibleNodes = Object.values(nodes).filter((n: Node) => !n.hidden); if (visibleNodes.length === 0) return; const x0 = Math.min(...visibleNodes.map((n: Node) => n.position.x)); const x1 = Math.max(...visibleNodes.map((n: Node) => n.position.x + n.size.width)); const y0 = Math.min(...visibleNodes.map((n: Node) => n.position.y)); const y1 = Math.max(...visibleNodes.map((n: Node) => n.position.y + n.size.height)); const k = Math.min(3, 0.9 / Math.max((x1 - x0) / width, (y1 - y0) / height)); const x = (width - k * (x0 + x1)) / 2; const y = (height - k * (y0 + y1)) / 2; svg.transition().duration(750).call(zoomBehaviorRef.current.transform, d3.zoomIdentity.translate(x, y).scale(k)); }} />
         <ProjectControls onSave={() => setIsSaveModalOpen(true)} isSaveModalOpen={isSaveModalOpen} onCloseSaveModal={() => setIsSaveModalOpen(false)} onSaveProject={handleSaveProject} onLoad={() => setIsLoadModalOpen(true)} isLoadModalOpen={isLoadModalOpen} onCloseLoadModal={() => setIsLoadModalOpen(false)} projects={projects} onLoadProject={handleLoadProject} onDeleteProject={handleDeleteProject} onExportProject={handleExportProject} onImportProject={handleImportProject} isSaving={isSaving} onExportCurrentProject={() => setIsExportModalOpen(true)} isExportModalOpen={isExportModalOpen} onCloseExportModal={() => setIsExportModalOpen(false)} onConfirmExport={(name) => { const currentState: ProjectState = { nodes, connections, history: [], panZoom, nodeRenderOrder: nodeRenderOrderRef.current }; const projectToExport: Project = { id: `proj-exported-${Date.now()}`, name: name, createdAt: new Date().toISOString(), state: currentState }; const dataStr = JSON.stringify(projectToExport, null, 2); const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr); const exportFileDefaultName = `${name.replace(/\s/g, '_')}.json`; const linkElement = document.createElement('a'); linkElement.setAttribute('href', dataUri); linkElement.setAttribute('download', exportFileDefaultName); linkElement.click(); setIsExportModalOpen(false); }} onExportPlayground={() => { const currentState: ProjectState = { nodes, connections, history: [], panZoom, nodeRenderOrder: nodeRenderOrderRef.current }; const projectToExport = { ...{ id: `playground-${Date.now()}`, name: 'Playground Export', createdAt: new Date().toISOString(), state: currentState }, type: 'Playground' }; const dataStr = JSON.stringify(projectToExport, null, 2); const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr); const linkElement = document.createElement('a'); linkElement.setAttribute('href', dataUri); linkElement.setAttribute('download', 'playground_workflow.json'); linkElement.click(); }} />
         <PlaygroundModal isOpen={isPlaygroundOpen} onClose={() => setIsPlaygroundOpen(false)} nodes={nodes} onDataChange={updateNodeData} onRun={executeGraph} onGenerateSingle={onGenerateNode} isGenerating={isGeneratingAll} />
       </div>
@@ -2151,16 +2226,31 @@ const App: React.FC = () => {
       {hasApiKey === false && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gray-900/90 backdrop-blur-sm">
           <div className="bg-gray-800 p-8 rounded-2xl shadow-2xl max-w-md text-center border border-gray-700">
+            <div className="w-16 h-16 bg-indigo-600/20 rounded-full flex items-center justify-center mx-auto mb-6">
+              <KeyIcon className="w-8 h-8 text-indigo-500" />
+            </div>
             <h2 className="text-2xl font-bold text-white mb-4">API Key Required</h2>
-            <p className="text-gray-300 mb-8">
-              To use the advanced image and video generation models, you must select your own Google Gemini API key.
+            <p className="text-gray-300 mb-8 leading-relaxed">
+              {window.aistudio 
+                ? "To use the advanced image and video generation models, you must select your own Google Gemini API key from the platform."
+                : "API Key selection is only available within the AI Studio environment. Please set the GEMINI_API_KEY environment variable in the settings to use this app standalone."}
             </p>
-            <button
-              onClick={handleSelectKey}
-              className="w-full px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold text-white transition-colors shadow-lg"
-            >
-              Select API Key
-            </button>
+            {window.aistudio ? (
+              <button
+                onClick={handleSelectKey}
+                className="w-full px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold text-white transition-colors shadow-lg flex items-center justify-center gap-2"
+              >
+                <KeyIcon className="w-5 h-5" />
+                Select API Key
+              </button>
+            ) : (
+              <button
+                onClick={() => setHasApiKey(true)}
+                className="w-full px-6 py-3 bg-gray-700 hover:bg-gray-600 rounded-xl font-bold text-white transition-colors"
+              >
+                Continue Anyway
+              </button>
+            )}
           </div>
         </div>
       )}

@@ -44,11 +44,23 @@ const ImagePreviewNode: React.FC<ImagePreviewNodeProps> = ({ node, onDataChange,
     <div className="space-y-3 flex flex-col h-full">
       <div className="bg-gray-900 w-full flex-grow rounded-md flex items-center justify-center border border-gray-700 relative overflow-hidden">
         {data.isLoading ? (
-           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
-        ) : displayUrl ? (
-          <img src={displayUrl} crossOrigin="anonymous" alt="Generated" className="w-full h-full object-contain rounded-md" />
+           <div className="flex flex-col items-center gap-2">
+             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
+             {data.loadingMessage && <p className="text-xs text-indigo-400 text-center px-2">{data.loadingMessage}</p>}
+           </div>
         ) : (
-          <p className="text-gray-500 text-center text-xs">Flash Preview Mode</p>
+          <div className="flex flex-col items-center justify-center w-full h-full relative">
+            {displayUrl ? (
+              <img src={displayUrl} crossOrigin="anonymous" alt="Generated" className="w-full h-full object-contain rounded-md" />
+            ) : (
+              <p className="text-gray-500 text-center text-xs">Flash Preview Mode</p>
+            )}
+            {data.loadingMessage && data.loadingMessage.startsWith('Error:') && (
+              <div className="absolute inset-0 bg-gray-900/80 flex items-center justify-center p-2">
+                <p className="text-red-400 text-[10px] text-center break-words w-full">{data.loadingMessage}</p>
+              </div>
+            )}
+          </div>
         )}
       </div>
       <div className="flex items-center gap-2">

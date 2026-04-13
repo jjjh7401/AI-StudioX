@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { GoogleGenAI, Modality, GenerateContentResponse, Type } from "@google/genai";
 import { MODEL_FACE_SHAPES, MODEL_HAIR_STYLES, MODEL_HAIR_COLORS } from '../data/constants';
 import { SCRIPT_STYLES_MASTER_PROMPT } from '../data/scriptStyles';
@@ -27,13 +28,20 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 5): Promise<T> {
             lastError = error;
             const errorMsg = error.message || JSON.stringify(error);
             const isQuotaError = errorMsg.includes("429") || errorMsg.includes("RESOURCE_EXHAUSTED") || error.status === 429;
-            const isSessionError = errorMsg.includes("Requested entity was not found.");
+            const isSessionError = 
+                errorMsg.includes("Requested entity was not found.") || 
+                errorMsg.includes("API_KEY_INVALID") || 
+                errorMsg.includes("API key not valid") ||
+                errorMsg.includes("API_KEY_SERVICE_BLOCKED");
             
             if (isSessionError) {
+                console.warn("API Key error detected, attempting to open selection window...");
                 if (window.aistudio?.openSelectKey) {
                     await window.aistudio.openSelectKey();
+                    throw new Error("API Key is invalid or missing. Please select a valid API key in the platform dialog and try again.");
+                } else {
+                    throw new Error("API Key is invalid or missing. If you are using the deployed app, please set the GEMINI_API_KEY environment variable in the settings.");
                 }
-                throw new Error("API Session expired. Please re-select your API key and try again.");
             }
 
             if (isQuotaError && i < maxRetries) {
@@ -53,11 +61,14 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 5): Promise<T> {
  * Removed forced key selection to allow using user's own environment key.
  */
 const getFreshGenAI = async (): Promise<GoogleGenAI> => {
-    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
-    if (!apiKey || apiKey.trim() === "") {
-        throw new Error("API Key is missing. Please ensure process.env.API_KEY or process.env.GEMINI_API_KEY is configured.");
-    }
-    return new GoogleGenAI({ apiKey });
+    // We use a dummy key because the actual key is injected by the backend proxy.
+    // The proxy runs on the same host, so we use a relative path.
+    return new GoogleGenAI({ 
+        apiKey: 'proxy-key', 
+        httpOptions: { 
+            baseUrl: window.location.origin + '/api/gemini' 
+        } 
+    });
 };
 
 const resizeImageForVideo = async (url: string, width: number, height: number): Promise<string> => {
@@ -384,9 +395,9 @@ export const generateVideo = async (
         if (!uri) throw new Error("Generation finished but no output URI was provided.");
         
         onProgress("Fetching binary...");
-        const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
-        const downloadLink = `${uri}&key=${apiKey}`;
-        const videoRes = await fetch(downloadLink);
+        // Replace the base URL with our proxy URL
+        const proxyUri = uri.replace('https://generativelanguage.googleapis.com', window.location.origin + '/api/gemini');
+        const videoRes = await fetch(proxyUri);
         if (!videoRes.ok) throw new Error("Failed to download video.");
         const videoBlob = await videoRes.blob();
         const videoBlobUrl = URL.createObjectURL(videoBlob);

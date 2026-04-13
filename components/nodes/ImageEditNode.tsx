@@ -46,14 +46,14 @@ const ImageEditNode: React.FC<ImageEditNodeProps> = ({ node, onDataChange, onGen
             const blob = await res.blob();
             const blobUrl = URL.createObjectURL(blob);
             
-            onDataChange(node.id, { outputImageUrl: blobUrl, isLoading: false });
+            onDataChange(node.id, { outputImageUrl: blobUrl, isLoading: false, loadingMessage: undefined });
             onAssetGenerated({ type: 'image', url: blobUrl });
         } else {
             onDataChange(node.id, { isLoading: false });
         }
     } catch (error) {
         console.error(`Error during ${action}:`, error);
-        onDataChange(node.id, { isLoading: false });
+        onDataChange(node.id, { isLoading: false, loadingMessage: `Error: ${error instanceof Error ? error.message : 'Unknown error'}` });
     }
   };
 
@@ -73,12 +73,24 @@ const ImageEditNode: React.FC<ImageEditNodeProps> = ({ node, onDataChange, onGen
     <div className="space-y-3 flex flex-col h-full">
         <div className="bg-gray-900 w-full flex-grow rounded-md flex items-center justify-center border border-gray-700 relative overflow-hidden min-h-0">
             {data.isLoading ? (
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
-            ) : data.outputImageUrl ? (
-            <img src={data.outputImageUrl} crossOrigin="anonymous" alt="Generated" className="w-full h-full object-contain rounded-md" />
-            ) : connectedImageUrl ? (
-                <img src={connectedImageUrl} crossOrigin="anonymous" alt="Input" className="w-full h-full object-contain rounded-md opacity-50" />
-            ) : null}
+            <div className="flex flex-col items-center gap-2">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
+              {data.loadingMessage && <p className="text-xs text-indigo-400 text-center px-2">{data.loadingMessage}</p>}
+            </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center w-full h-full relative">
+                {data.outputImageUrl ? (
+                  <img src={data.outputImageUrl} crossOrigin="anonymous" alt="Generated" className="w-full h-full object-contain rounded-md" />
+                ) : connectedImageUrl ? (
+                    <img src={connectedImageUrl} crossOrigin="anonymous" alt="Input" className="w-full h-full object-contain rounded-md opacity-50" />
+                ) : null}
+                {data.loadingMessage && data.loadingMessage.startsWith('Error:') && (
+                  <div className="absolute inset-0 bg-gray-900/80 flex items-center justify-center p-2">
+                    <p className="text-red-400 text-[10px] text-center break-words w-full">{data.loadingMessage}</p>
+                  </div>
+                )}
+              </div>
+            )}
         </div>
       <button
         onClick={handleGenerate}
