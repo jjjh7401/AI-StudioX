@@ -66,7 +66,7 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAddNode, isGenerating, onOpenPlaygr
   const dropdownItemClasses = "flex items-center gap-3 px-4 py-3 text-sm text-white hover:bg-indigo-600 transition-colors w-full text-left";
 
   return (
-    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 p-2 bg-gray-800/50 backdrop-blur-sm rounded-xl shadow-2xl flex gap-3 justify-center">
+    <div className="z-10 p-2 bg-gray-800/50 backdrop-blur-sm rounded-xl shadow-2xl flex gap-3 justify-center">
       
       <button 
         onClick={onOpenPlayground} 

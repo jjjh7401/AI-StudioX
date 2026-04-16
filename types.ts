@@ -399,6 +399,7 @@ export interface Project {
   createdAt: string;
   state: ProjectState;
   type?: 'Playground';
+  aspectRatio?: string;
 }
 
 export type NodeData = TextNodeData | AssistantNodeData | ImageNodeData | ImagePreviewNodeData | ImageEditNodeData | ImageLoadNodeData | VideoNodeData | VideoLoadNodeData | VideoStitchNodeData | CameraNodeData | PresetNodeData | CameraPresetNodeData | ModelNodeData | VtonNodeData | CommentNodeData | StoryboardNodeData | ScriptNodeData | ArrayNodeData | ListNodeData | PromptConcatenatorNodeData | CompositeNodeData | StitchNodeData | RMBGNodeData | GroupNodeData | GridShotNodeData | GridExtractorNodeData | SelectImageNodeData | ImageModifyNodeData | OutfitDetailNodeData;

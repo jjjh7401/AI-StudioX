@@ -185,11 +185,13 @@ const App: React.FC = () => {
   const [nodeRenderOrder, setNodeRenderOrder] = useImmer<string[]>([]);
   
   const [projects, setProjects] = useImmer<Project[]>([]);
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isPlaygroundOpen, setIsPlaygroundOpen] = useState(false); // Playground State
+  const [afterSaveAction, setAfterSaveAction] = useState<'newProject' | null>(null);
   
   const clipboardRef = useRef<{ nodes: Node[], connections: Connection[] } | null>(null);
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
@@ -2022,17 +2024,48 @@ const App: React.FC = () => {
 
   const handleSaveProject = async (name: string) => {
     setIsSaving(true);
-    const newProject: Project = {
-      id: `proj-${Date.now()}`,
-      name,
-      createdAt: new Date().toISOString(),
-      state: { nodes, connections, history, panZoom, nodeRenderOrder }
-    };
-    const updated = [...projects, newProject];
+    
+    // Determine aspect ratio for the project card (heuristic: first script or image node)
+    let aspectRatio = '16:9';
+    const scriptNode = Object.values(nodes).find(n => n.type === NodeType.Script);
+    if (scriptNode) {
+        aspectRatio = (scriptNode.data as ScriptNodeData).aspectRatio;
+    } else {
+        const imageNode = Object.values(nodes).find(n => n.type === NodeType.Image || n.type === NodeType.ImagePreview);
+        if (imageNode) aspectRatio = (imageNode.data as ImageNodeData).aspectRatio;
+    }
+
+    const projectState: ProjectState = { nodes, connections, history, panZoom, nodeRenderOrder };
+    
+    let updated: Project[];
+    if (currentProjectId) {
+        updated = projects.map(p => p.id === currentProjectId ? { ...p, name, state: projectState, aspectRatio } : p);
+    } else {
+        const newProject: Project = {
+            id: `proj-${Date.now()}`,
+            name,
+            createdAt: new Date().toISOString(),
+            state: projectState,
+            aspectRatio
+        };
+        updated = [...projects, newProject];
+        setCurrentProjectId(newProject.id);
+    }
+    
     setProjects(updated);
     await saveProjectsToStorage(updated);
     setIsSaving(false);
     setIsSaveModalOpen(false);
+
+    if (afterSaveAction === 'newProject') {
+        setNodes({});
+        setConnections([]);
+        setHistory([]);
+        setPanZoom({ x: 0, y: 0, k: 1 });
+        setNodeRenderOrder([]);
+        setCurrentProjectId(null);
+        setAfterSaveAction(null);
+    }
   };
 
   const handleLoadProject = (id: string) => {
@@ -2043,8 +2076,27 @@ const App: React.FC = () => {
       setHistory(project.state.history);
       setPanZoom(project.state.panZoom);
       setNodeRenderOrder(project.state.nodeRenderOrder || Object.keys(project.state.nodes));
+      setCurrentProjectId(project.id);
       setIsLoadModalOpen(false);
     }
+  };
+
+  const handleMakeProject = () => {
+    const hasContent = Object.keys(nodes).length > 0;
+    if (hasContent && !currentProjectId) {
+      setAfterSaveAction('newProject');
+      setIsSaveModalOpen(true);
+      return;
+    }
+    
+    // Clear canvas
+    setNodes({});
+    setConnections([]);
+    setHistory([]);
+    setPanZoom({ x: 0, y: 0, k: 1 });
+    setNodeRenderOrder([]);
+    setCurrentProjectId(null);
+    setIsLoadModalOpen(false); // Close load modal if it was open (from "New Project" button)
   };
 
   const handleDeleteProject = async (id: string) => {
@@ -2201,25 +2253,48 @@ const App: React.FC = () => {
           </g>
         </svg>
         
-        <Toolbar onAddNode={addNode} isGenerating={isGeneratingAll} onOpenPlayground={() => setIsPlaygroundOpen(true)} />
         <ToolsPanel activeTool={activeTool} setActiveTool={setActiveTool} />
         
-        <div className="absolute top-4 right-4 z-10 flex items-center gap-3">
-          <button 
-            onClick={executeGraph} 
-            disabled={isGeneratingAll} 
-            className="flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl shadow-2xl text-white font-bold transition-all duration-200 ease-in-out disabled:bg-gray-600 disabled:cursor-not-allowed"
-          > 
-            {isGeneratingAll ? ( 
-              <> <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> <span>Generating...</span> </> 
-            ) : ( 
-              <> <PlayIcon className="w-6 h-6" /> <span>Generate All</span> </> 
-            )} 
-          </button>
+        <div className="absolute top-4 right-4 z-10 flex flex-col items-end gap-3">
+          <div className="flex items-center gap-3">
+            <ProjectControls 
+              onSave={() => setIsSaveModalOpen(true)} 
+              onMakeProject={handleMakeProject}
+              isSaveModalOpen={isSaveModalOpen} 
+              onCloseSaveModal={() => { setIsSaveModalOpen(false); setAfterSaveAction(null); }} 
+              onSaveProject={handleSaveProject} 
+              onLoad={() => setIsLoadModalOpen(true)} 
+              isLoadModalOpen={isLoadModalOpen} 
+              onCloseLoadModal={() => setIsLoadModalOpen(false)} 
+              projects={projects} 
+              onLoadProject={handleLoadProject} 
+              onDeleteProject={handleDeleteProject} 
+              onExportProject={handleExportProject} 
+              onImportProject={handleImportProject} 
+              isSaving={isSaving} 
+              onExportCurrentProject={() => setIsExportModalOpen(true)} 
+              isExportModalOpen={isExportModalOpen} 
+              onCloseExportModal={() => setIsExportModalOpen(false)} 
+              onConfirmExport={(name) => { const currentState: ProjectState = { nodes, connections, history: [], panZoom, nodeRenderOrder: nodeRenderOrderRef.current }; const projectToExport: Project = { id: `proj-exported-${Date.now()}`, name: name, createdAt: new Date().toISOString(), state: currentState }; const dataStr = JSON.stringify(projectToExport, null, 2); const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr); const exportFileDefaultName = `${name.replace(/\s/g, '_')}.json`; const linkElement = document.createElement('a'); linkElement.setAttribute('href', dataUri); linkElement.setAttribute('download', exportFileDefaultName); linkElement.click(); setIsExportModalOpen(false); }} 
+              onExportPlayground={() => { const currentState: ProjectState = { nodes, connections, history: [], panZoom, nodeRenderOrder: nodeRenderOrderRef.current }; const projectToExport = { ...{ id: `playground-${Date.now()}`, name: 'Playground Export', createdAt: new Date().toISOString(), state: currentState }, type: 'Playground' }; const dataStr = JSON.stringify(projectToExport, null, 2); const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr); const linkElement = document.createElement('a'); linkElement.setAttribute('href', dataUri); linkElement.setAttribute('download', 'playground_workflow.json'); linkElement.click(); }} 
+            />
+            <button 
+              onClick={executeGraph} 
+              disabled={isGeneratingAll} 
+              className="flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl shadow-2xl text-white font-bold transition-all duration-200 ease-in-out disabled:bg-gray-600 disabled:cursor-not-allowed"
+            > 
+              {isGeneratingAll ? ( 
+                <> <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> <span>Generating...</span> </> 
+              ) : ( 
+                <> <PlayIcon className="w-6 h-6" /> <span>Generate All</span> </> 
+              )} 
+            </button>
+          </div>
+          <Toolbar onAddNode={addNode} isGenerating={isGeneratingAll} onOpenPlayground={() => setIsPlaygroundOpen(true)} />
         </div>
 
         <ZoomControls zoomLevel={panZoom.k} onZoomIn={() => zoomBehaviorRef.current && d3.select(svgRef.current).transition().call(zoomBehaviorRef.current.scaleBy, 1.2)} onZoomOut={() => zoomBehaviorRef.current && d3.select(svgRef.current).transition().call(zoomBehaviorRef.current.scaleBy, 0.8)} onZoomToFit={() => { if (!zoomBehaviorRef.current || !svgRef.current || Object.keys(nodes).length === 0) return; const svg = d3.select(svgRef.current); const parent = svg.node()?.parentElement; if (!parent) return; const { width, height } = parent.getBoundingClientRect(); const visibleNodes = Object.values(nodes).filter((n: Node) => !n.hidden); if (visibleNodes.length === 0) return; const x0 = Math.min(...visibleNodes.map((n: Node) => n.position.x)); const x1 = Math.max(...visibleNodes.map((n: Node) => n.position.x + n.size.width)); const y0 = Math.min(...visibleNodes.map((n: Node) => n.position.y)); const y1 = Math.max(...visibleNodes.map((n: Node) => n.position.y + n.size.height)); const k = Math.min(3, 0.9 / Math.max((x1 - x0) / width, (y1 - y0) / height)); const x = (width - k * (x0 + x1)) / 2; const y = (height - k * (y0 + y1)) / 2; svg.transition().duration(750).call(zoomBehaviorRef.current.transform, d3.zoomIdentity.translate(x, y).scale(k)); }} />
-        <ProjectControls onSave={() => setIsSaveModalOpen(true)} isSaveModalOpen={isSaveModalOpen} onCloseSaveModal={() => setIsSaveModalOpen(false)} onSaveProject={handleSaveProject} onLoad={() => setIsLoadModalOpen(true)} isLoadModalOpen={isLoadModalOpen} onCloseLoadModal={() => setIsLoadModalOpen(false)} projects={projects} onLoadProject={handleLoadProject} onDeleteProject={handleDeleteProject} onExportProject={handleExportProject} onImportProject={handleImportProject} isSaving={isSaving} onExportCurrentProject={() => setIsExportModalOpen(true)} isExportModalOpen={isExportModalOpen} onCloseExportModal={() => setIsExportModalOpen(false)} onConfirmExport={(name) => { const currentState: ProjectState = { nodes, connections, history: [], panZoom, nodeRenderOrder: nodeRenderOrderRef.current }; const projectToExport: Project = { id: `proj-exported-${Date.now()}`, name: name, createdAt: new Date().toISOString(), state: currentState }; const dataStr = JSON.stringify(projectToExport, null, 2); const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr); const exportFileDefaultName = `${name.replace(/\s/g, '_')}.json`; const linkElement = document.createElement('a'); linkElement.setAttribute('href', dataUri); linkElement.setAttribute('download', exportFileDefaultName); linkElement.click(); setIsExportModalOpen(false); }} onExportPlayground={() => { const currentState: ProjectState = { nodes, connections, history: [], panZoom, nodeRenderOrder: nodeRenderOrderRef.current }; const projectToExport = { ...{ id: `playground-${Date.now()}`, name: 'Playground Export', createdAt: new Date().toISOString(), state: currentState }, type: 'Playground' }; const dataStr = JSON.stringify(projectToExport, null, 2); const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr); const linkElement = document.createElement('a'); linkElement.setAttribute('href', dataUri); linkElement.setAttribute('download', 'playground_workflow.json'); linkElement.click(); }} />
+
         <PlaygroundModal isOpen={isPlaygroundOpen} onClose={() => setIsPlaygroundOpen(false)} nodes={nodes} onDataChange={updateNodeData} onRun={executeGraph} onGenerateSingle={onGenerateNode} isGenerating={isGeneratingAll} />
       </div>
 

@@ -48,6 +48,40 @@ export const urlToDataURL = (url: string): Promise<string> => {
   });
 };
 
+export const urlToResizedDataURL = async (url: string, maxDim: number = 1536): Promise<string> => {
+    const dataUrl = await urlToDataURL(url);
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            if (img.width <= maxDim && img.height <= maxDim) {
+                return resolve(dataUrl);
+            }
+            const canvas = document.createElement('canvas');
+            let w = img.width;
+            let h = img.height;
+            if (w > h) {
+                if (w > maxDim) {
+                    h *= maxDim / w;
+                    w = maxDim;
+                }
+            } else {
+                if (h > maxDim) {
+                    w *= maxDim / h;
+                    h = maxDim;
+                }
+            }
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return resolve(dataUrl);
+            ctx.drawImage(img, 0, 0, w, h);
+            resolve(canvas.toDataURL('image/jpeg', 0.85));
+        };
+        img.onerror = () => reject(new Error("Image resize load failed"));
+        img.src = dataUrl;
+    });
+};
+
 export const compositeImages = async (layers: CompositeLayer[], canvasWidth: number, canvasHeight: number): Promise<string | null> => {
     if (layers.length === 0) return null;
     const canvas = document.createElement('canvas');

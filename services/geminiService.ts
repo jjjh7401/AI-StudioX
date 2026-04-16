@@ -3,7 +3,7 @@ import { GoogleGenAI, Modality, GenerateContentResponse, Type } from "@google/ge
 import { MODEL_FACE_SHAPES, MODEL_HAIR_STYLES, MODEL_HAIR_COLORS } from '../data/constants';
 import { SCRIPT_STYLES_MASTER_PROMPT } from '../data/scriptStyles';
 import { ScriptData, ScriptShot } from "../types";
-import { urlToDataURL } from './imageProcessingService'; 
+import { urlToDataURL, urlToResizedDataURL } from './imageProcessingService'; 
 
 declare global {
   interface AIStudio {
@@ -217,7 +217,7 @@ export const generateText = async (prompt: string, base64Images: string[] | null
     const parts: any[] = [{ text: prompt }];
     if (base64Images) {
         for (const url of base64Images) {
-            const dataUrl = await urlToDataURL(url);
+            const dataUrl = await urlToResizedDataURL(url);
             const mimeType = dataUrl.match(/data:(.*?);/)?.[1] || 'image/jpeg';
             parts.push({ inlineData: { data: dataUrl.split(',')[1], mimeType } });
         }
@@ -238,7 +238,7 @@ export const generateImage = async (prompt: string, aspectRatio: string, referen
         const parts: any[] = [];
         
         for (const url of referenceImages) {
-            const dataUrl = await urlToDataURL(url);
+            const dataUrl = await urlToResizedDataURL(url);
             const mimeType = dataUrl.match(/data:(.*?);/)?.[1] || 'image/jpeg';
             parts.push({ inlineData: { data: dataUrl.split(',')[1], mimeType } });
         }
@@ -466,7 +466,7 @@ export const generateVtonImage = async (m: string, o: string, p: string) => {
 export const generateStoryboardScenario = async (prompt: string, img: string) => {
     return withRetry(async () => {
         const ai = await getFreshGenAI();
-        const dataUrl = await urlToDataURL(img);
+        const dataUrl = await urlToResizedDataURL(img);
         const mimeType = dataUrl.match(/data:(.*?);/)?.[1] || 'image/jpeg';
         const response = await ai.models.generateContent({
             model: 'gemini-3.1-pro-preview',
@@ -527,7 +527,7 @@ export const detectGridItems = async (imageUrl: string): Promise<{ items: { bbox
 4. Extract the exact text label found immediately below each thumbnail.
 Return the result as a JSON object with an "items" array.`;
 
-        const imageDataUrl = await urlToDataURL(imageUrl);
+        const imageDataUrl = await urlToResizedDataURL(imageUrl);
         const mimeType = imageDataUrl.match(/data:(.*?);/)?.[1] || 'image/jpeg';
         const imagePart = { inlineData: { data: imageDataUrl.split(',')[1], mimeType } };
 
