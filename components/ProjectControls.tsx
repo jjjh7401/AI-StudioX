@@ -274,15 +274,52 @@ const ProjectControls: React.FC<ProjectControlsProps> = (props) => {
                 onChange={handleFileChange}
             />
             <div className="flex items-center gap-3" ref={menuRef}>
-                 <button 
-                    onClick={() => setIsMenuOpen(prev => !prev)} 
-                    className="flex items-center gap-2 px-6 py-3 bg-[#242933] hover:bg-gray-700 rounded-xl shadow-lg text-white font-bold transition-all text-sm border border-gray-700/50"
-                    aria-haspopup="true"
-                    aria-expanded={isMenuOpen}
-                >
-                    <Bars3Icon className="w-5 h-5" />
-                    <span>MENU</span>
-                </button>
+                <div className="relative">
+                    <button 
+                        onClick={() => setIsMenuOpen(prev => !prev)} 
+                        className="flex items-center gap-2 px-6 py-3 bg-[#242933] hover:bg-gray-700 rounded-xl shadow-lg text-white font-bold transition-all text-sm border border-gray-700/50"
+                        aria-haspopup="true"
+                        aria-expanded={isMenuOpen}
+                    >
+                        <Bars3Icon className="w-5 h-5" />
+                        <span>MENU</span>
+                    </button>
+
+                    <div className={`absolute top-full left-0 mt-2 w-64 bg-[#1a1d24] rounded-2xl shadow-2xl border border-gray-700 overflow-hidden transition-all duration-200 ease-out z-50 ${isMenuOpen ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2 pointer-events-none'}`}>
+                        <ul className="text-white text-sm font-bold divide-y divide-gray-800">
+                            <li>
+                                <button onClick={() => { props.onMakeProject(); setIsMenuOpen(false); }} className="w-full flex items-center gap-3 px-5 py-4 hover:bg-gray-800 transition-colors text-left">
+                                    <PlusIcon className="w-5 h-5" /> Make Project
+                                </button>
+                            </li>
+                            <li>
+                                <button onClick={() => { props.onSave(); setIsMenuOpen(false); }} className="w-full flex items-center gap-3 px-5 py-4 hover:bg-gray-800 transition-colors text-left">
+                                    <ArrowDownTrayIcon className="w-5 h-5" /> Save Project
+                                </button>
+                            </li>
+                            <li>
+                                <button onClick={() => { props.onLoad(); setIsMenuOpen(false); }} className="w-full flex items-center gap-3 px-5 py-4 hover:bg-gray-800 transition-colors text-left">
+                                    <FolderIcon className="w-5 h-5" /> Project
+                                </button>
+                            </li>
+                            <li>
+                                <button onClick={() => { handleImportClick(); setIsMenuOpen(false); }} className="w-full flex items-center gap-3 px-5 py-4 hover:bg-gray-800 transition-colors text-left">
+                                    <FolderOpenIcon className="w-5 h-5" /> Import
+                                </button>
+                            </li>
+                            <li>
+                                <button onClick={() => { props.onExportCurrentProject(); setIsMenuOpen(false); }} className="w-full flex items-center gap-3 px-5 py-4 hover:bg-gray-800 transition-colors text-left">
+                                    <ArrowUpOnSquareIcon className="w-5 h-5" /> Export Project
+                                </button>
+                            </li>
+                            <li>
+                                <button onClick={() => { props.onExportPlayground(); setIsMenuOpen(false); }} className="w-full flex items-center gap-3 px-5 py-4 bg-emerald-900/20 hover:bg-emerald-600/40 text-emerald-400 transition-colors text-left">
+                                    <RocketLaunchIcon className="w-5 h-5" /> Playground Export
+                                </button>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
 
                 <button 
                     onClick={props.onLoad}
@@ -291,41 +328,6 @@ const ProjectControls: React.FC<ProjectControlsProps> = (props) => {
                     <FolderIcon className="w-5 h-5" />
                     <span>Project</span>
                 </button>
-
-                <div className={`absolute top-full right-0 mt-2 w-64 bg-[#1a1d24] rounded-2xl shadow-2xl border border-gray-700 overflow-hidden transition-all duration-200 ease-out z-50 ${isMenuOpen ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2 pointer-events-none'}`}>
-                    <ul className="text-white text-sm font-bold divide-y divide-gray-800">
-                        <li>
-                            <button onClick={() => { props.onMakeProject(); setIsMenuOpen(false); }} className="w-full flex items-center gap-3 px-5 py-4 hover:bg-gray-800 transition-colors text-left">
-                                <PlusIcon className="w-5 h-5" /> Make Project
-                            </button>
-                        </li>
-                        <li>
-                            <button onClick={() => { props.onSave(); setIsMenuOpen(false); }} className="w-full flex items-center gap-3 px-5 py-4 hover:bg-gray-800 transition-colors text-left">
-                                <ArrowDownTrayIcon className="w-5 h-5" /> Save Project
-                            </button>
-                        </li>
-                        <li>
-                            <button onClick={() => { props.onLoad(); setIsMenuOpen(false); }} className="w-full flex items-center gap-3 px-5 py-4 hover:bg-gray-800 transition-colors text-left">
-                                <FolderIcon className="w-5 h-5" /> Project
-                            </button>
-                        </li>
-                        <li>
-                            <button onClick={() => { handleImportClick(); setIsMenuOpen(false); }} className="w-full flex items-center gap-3 px-5 py-4 hover:bg-gray-800 transition-colors text-left">
-                                <FolderOpenIcon className="w-5 h-5" /> Import
-                            </button>
-                        </li>
-                        <li>
-                            <button onClick={() => { props.onExportCurrentProject(); setIsMenuOpen(false); }} className="w-full flex items-center gap-3 px-5 py-4 hover:bg-gray-800 transition-colors text-left">
-                                <ArrowUpOnSquareIcon className="w-5 h-5" /> Export Project
-                            </button>
-                        </li>
-                        <li>
-                            <button onClick={() => { props.onExportPlayground(); setIsMenuOpen(false); }} className="w-full flex items-center gap-3 px-5 py-4 bg-emerald-900/20 hover:bg-emerald-600/40 text-emerald-400 transition-colors text-left">
-                                <RocketLaunchIcon className="w-5 h-5" /> Playground Export
-                            </button>
-                        </li>
-                    </ul>
-                </div>
             </div>
             
             <SaveModal 
